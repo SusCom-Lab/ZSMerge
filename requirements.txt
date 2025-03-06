@@ -1,0 +1,13 @@
+
+torch==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+torchvision
+torchaudio
+datasets
+
+transformers==4.47.1
+sentencepiece
+protobuf
+jieba
+fuzzywuzzy
+
+python-dotenv
