@@ -458,8 +458,8 @@ def llama_sdpa_attn_forward_(
 
     bsz, n_h, t_k, d_k = key_states.size()
     bsz, n_head, q_len, n_dim = query_states.size()
-    if bsz > 1:
-        raise NotImplementedError
+    # if bsz > 1:
+    #     raise NotImplementedError
     
     assert past_key_value is not None
 
