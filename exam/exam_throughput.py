@@ -37,26 +37,29 @@ def benchmark_kv_cache(model, tokenizer, batch_size, prompt_length, generate_len
     # Warmup GPU (optional)
     # _ = model.generate(input_ids, max_new_tokens=1)
     
-    # Performance measurement
-    start_time = time.time()
-    with torch.no_grad():
-        outputs = model.generate(
-            input_ids,
-            max_new_tokens=generate_length,
-            min_new_tokens=generate_length,
-            pad_token_id=tokenizer.eos_token_id
-        )
-        output_len = outputs.size(-1) - input_ids.size(-1)
-        assert output_len == generate_length, f"output_len<{output_len}> != generate_length<{generate_length}>"
-    latency = time.time() - start_time
-    
-    # Calculate metrics
-    throughput = batch_size * generate_length / latency
-    
     # Print formatted results
     print(f"\n[Benchmark Results]")
     print(f"Model: {args.model_name}")
     print(f"Batch Size: {batch_size} | Prompt Length: {prompt_length} | Generate Length: {generate_length}")
+    
+    try:
+        start_time = time.time()
+        with torch.no_grad():
+            outputs = model.generate(
+                input_ids,
+                max_new_tokens=generate_length,
+                min_new_tokens=generate_length,
+                pad_token_id=tokenizer.eos_token_id
+            )
+            output_len = outputs.size(-1) - input_ids.size(-1)
+            assert output_len == generate_length, f"output_len<{output_len}> != generate_length<{generate_length}>"
+        latency = time.time() - start_time
+    except torch.OutOfMemoryError:
+        print("[OutOfMemoryError]")
+        return
+    
+    # Calculate metrics
+    throughput = batch_size * generate_length / latency
     print(f"Latency: {latency:.2f}s | Throughput: {throughput:.2f} tokens/s")
 
 

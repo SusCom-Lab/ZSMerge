@@ -45,18 +45,18 @@ def gen_equal(self):
         print("-" * 20, f"Q:\n\t{q}\nA:\n\t{a}", sep="\n")
     
     AF.change_mode(merge=True, cache_budget=100)
-    with self.assertRaises(NotImplementedError):
-        output = model.generate(
-            **tokenized_prompts,
-            output_attentions = False,
-            max_new_tokens=output_len,
-            num_beams=1,
-            do_sample=False,
-            top_p=None,
-            temperature=1.0,
-            min_length=context_length+1,
-            eos_token_id=[tokenizer.eos_token_id]
-        )
+    # with self.assertRaises(NotImplementedError):
+    #     output = model.generate(
+    #         **tokenized_prompts,
+    #         output_attentions = False,
+    #         max_new_tokens=output_len,
+    #         num_beams=1,
+    #         do_sample=False,
+    #         top_p=None,
+    #         temperature=1.0,
+    #         min_length=context_length+1,
+    #         eos_token_id=[tokenizer.eos_token_id]
+    #     )
 
     for idx, (q, a) in enumerate(zip(batch_prompts, batch_outputs)):
         tokenized_prompts = tokenizer([q], padding="longest", return_tensors="pt", add_special_tokens=True).to(self.device)

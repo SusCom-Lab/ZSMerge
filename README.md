@@ -36,6 +36,11 @@ python -m unittest tests.test_mistral_att
 python -m unittest tests.test_llama_att
 ```
 
+### Validate throughput
+
+```bash
+bash scripts/e_throughput.sh
+```
 
 ## License 📄
 This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
