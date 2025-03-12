@@ -42,5 +42,10 @@ python -m unittest tests.test_llama_att
 bash scripts/e_throughput.sh
 ```
 
+### Validate rough
+
+```bash
+bash scripts/e_rouge.sh
+```
 ## License 📄
 This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
