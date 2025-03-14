@@ -42,7 +42,7 @@ python -m unittest tests.test_llama_att
 bash scripts/e_throughput.sh
 ```
 
-### Validate rough
+### Validate rouge
 
 ```bash
 bash scripts/e_rouge.sh
