@@ -1,11 +1,11 @@
-# MergeKV Project 🚀
+# ZeroMerge Project 🚀
 
 ![](./assets/cache_methods.png) 
 
 A high-performance key-value merging utility with modular design and automated testing.
 
 ## Features ✨
-- ​**MergeKV Core Module**: Efficient key-value cache merging algorithms
+- ​**ZeroMerge Core Module**: Efficient key-value cache merging algorithms
 - ​**Extensible Testing**: Comprehensive unittest coverage
 - ​**Script Automation**: Bash scripts for experiment replication
 - ​**MIT Licensed**: Open and permissive usage
