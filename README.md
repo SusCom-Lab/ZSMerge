@@ -1,11 +1,11 @@
-# ZeroMerge Project 🚀
+# ZSMerge Project 🚀
 
 ![](./assets/cache_methods.png) 
 
 A high-performance key-value merging utility with modular design and automated testing.
 
 ## Features ✨
-- ​**ZeroMerge Core Module**: Efficient key-value cache merging algorithms
+- ​**ZSMerge Core Module**: Efficient key-value cache merging algorithms
 - ​**Extensible Testing**: Comprehensive unittest coverage
 - ​**Script Automation**: Bash scripts for experiment replication
 - ​**MIT Licensed**: Open and permissive usage
@@ -49,3 +49,15 @@ bash scripts/e_rouge.sh
 ```
 ## License 📄
 This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
+
+
+## Citation cite🏡
+
+If you found this repository helpful in your work, please cite our [paper](https://arxiv.org/abs/2503.10714):
+
+@article{liu2025zeromerge,
+  title={ZeroMerge: Parameter-Free KV Cache Compression for Memory-Efficient Long-Context LLMs},
+  author={Liu, Xin and Liu, Pei and Tang, Guoming},
+  journal={arXiv preprint arXiv:2503.10714},
+  year={2025}
+}
