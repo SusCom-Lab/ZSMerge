@@ -56,7 +56,7 @@ This project is licensed under the MIT License - see the [LICENSE](./LICENSE) fi
 If you found this repository helpful in your work, please cite our [paper](https://arxiv.org/abs/2503.10714):
 
 @article{liu2025zeromerge,
-  title={ZeroMerge: Parameter-Free KV Cache Compression for Memory-Efficient Long-Context LLMs},
+  title={ZSMerge: Zero-Shot KV Cache Compression for Memory-Efficient Long-Context LLMs},
   author={Liu, Xin and Liu, Pei and Tang, Guoming},
   journal={arXiv preprint arXiv:2503.10714},
   year={2025}
