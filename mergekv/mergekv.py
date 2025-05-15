@@ -62,9 +62,13 @@ def score_scaled_dot_product_attention(
         pos_weight:  torch.Tensor = None,
         scale_factor: float = None,
         shrink_factor: float = None,
+        init_f: bool = False,
+        window_size: int = None,
+        window_pool: Optional[str] = None,
+        kernel_size: Optional[int] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     def sub_sdpa(
-            start_ind,
+            t_bias: int,
             sub_query: torch.Tensor ,
             key: torch.Tensor ,
             value: torch.Tensor ,
@@ -81,7 +85,7 @@ def score_scaled_dot_product_attention(
         
         if sub_attn_mask is None and  need_mask:
             mask_dtype = torch.float32
-            sub_attn_mask = torch.triu(torch.full((t_q, t_k), torch.finfo(mask_dtype).min, dtype=mask_dtype, device=key.device), diagonal=1 + start_ind)
+            sub_attn_mask = torch.triu(torch.full((t_q, t_k), torch.finfo(mask_dtype).min, dtype=mask_dtype, device=key.device), diagonal=t_k - t_bias + 1)
             sub_attn_mask = sub_attn_mask[None, None, ...]
         scores = torch.matmul(sub_query, key.transpose(-2, -1))
         scores = scores * scale
@@ -105,17 +109,32 @@ def score_scaled_dot_product_attention(
     bzs, n_head, t_k, d_k = key.size()
     bzs, n_head, t_q, d_q = query.size()
 
+    if init_f:
+        attn_output = torch.nn.functional.scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            dropout_p=0.0,
+            is_causal=True,
+        )
+    else:
+        attn_output = None
+    
+    if window_size is not None:
+        query = query[:, :, -window_size:, :]
+        bzs, n_head, t_q, d_q = query.size()
+        attn_mask = attn_mask[:, :, -window_size:, :] if attn_mask is not None else None
     need_mask =  t_q > 1
     sub_len = t_q
     shrink_factor_tensor = torch.tensor(shrink_factor, dtype=key.dtype, device=key.device)
-    score = torch.zeros(bzs, n_head, t_k, dtype=key.dtype, device=key.device)
-    output = []
     while 1:
         try:
+            score = torch.zeros(bzs, n_head, t_k, dtype=key.dtype, device=key.device)
+            output = []
             for start_ind in range(0, t_q, sub_len):
                 sub_query = query[:, :, start_ind : start_ind + sub_len]
                 sub_attn_mask = attn_mask[:, :, start_ind : start_ind + sub_len] if attn_mask else None
-                output_sub, score_ = sub_sdpa(start_ind, sub_query, key, value, sub_attn_mask, pos_weight, scale_factor, shrink_factor, need_mask=need_mask)
+                output_sub, score_ = sub_sdpa(t_q - start_ind, sub_query, key, value, sub_attn_mask, pos_weight, scale_factor, shrink_factor, need_mask=need_mask)
                 output.append(output_sub)
                 score *= torch.pow(shrink_factor_tensor, sub_query.size(2))
                 score += score_
@@ -126,50 +145,15 @@ def score_scaled_dot_product_attention(
             if sub_len<= 10:
                 raise e
             sub_len = (sub_len + 3) // 4
+    if init_f:
+        assert attn_output is not None
+        output = attn_output
+        if window_pool == 'avgpool':
+            score = F.avg_pool1d(score, kernel_size=kernel_size, padding=kernel_size//2, stride=1)
+        elif window_pool == 'maxpool':
+            score = F.max_pool1d(score, kernel_size=kernel_size, padding=kernel_size//2, stride=1)
     return output, score
 
-def score_scaled_dot_product_attention_(
-        query: torch.Tensor ,
-        key: torch.Tensor ,
-        value: torch.Tensor ,
-        attn_mask:  torch.Tensor = None,
-        pos_weight:  torch.Tensor = None,
-        scale_factor: float = None,
-        shrink_factor: float = None,
-) -> torch.Tensor:
-    dtype = query.dtype
-    bzs, n_head, t_k, d_k = key.size()
-    bzs, n_head, t_q, d_q = query.size()
-    scale = 1.0 / torch.sqrt(torch.tensor(d_k, dtype=dtype))
-    
-    if t_q > 1:
-        assert t_q == t_k
-
-    if attn_mask is None and  t_q > 1:
-        mask_dtype = torch.float32
-        attn_mask = torch.triu(torch.full((t_q, t_k), torch.finfo(mask_dtype).min, dtype=mask_dtype, device=key.device), diagonal=t_k-t_q + 1)
-        attn_mask = attn_mask[None, None, ...]
-    scores = torch.matmul(query, key.transpose(-2, -1))
-    scores = scores * scale
-    
-    if attn_mask is not None:
-        scores = scores + attn_mask
-
-    # softmax
-    if pos_weight is not None:
-        scores += scale_factor * torch.log(pos_weight)[..., None, :]
-    attn_weights = F.softmax(scores, dim=-1, dtype=value.dtype)
-
-
-    output = torch.matmul(attn_weights, value)
-    if shrink_factor < 1 and t_q > 1:
-        shrink_f = torch.pow(shrink_factor, torch.arange(t_q, device=attn_weights.device))
-        shrink_f_flipped = torch.flip(shrink_f, dims=[0])
-        score = (attn_weights * shrink_f_flipped[None, None, :, None]).sum(dim=-2)
-    else:
-        score = attn_weights.sum(dim=-2)
-    return output, score
-    
 
 def topk_split(E, S, k):
     b, t, d = E.shape
@@ -433,6 +417,9 @@ def cache_args_parse(kwargs, q_len):
     cache_tail = kwargs.get("cache_tail", 0.1)
     scale_factor = kwargs.setdefault("scale_factor", 1)
     shrink_factor = kwargs.setdefault("shrink_factor", 0.98)
+    window_size = kwargs.setdefault("window_size", 8)
+    window_pool = kwargs.setdefault("window_pool", "maxpool")
+    kernel_size = kwargs.setdefault("kernel_size", 5)
     kwargs.setdefault("metric", "dot_product")
     kwargs.setdefault("score_update", "max")
 
@@ -500,6 +487,9 @@ def llama_sdpa_attn_forward_(
     layer_idx = self.layer_idx
     kwargs.update(layer_idx=layer_idx, init_f=init_f)
     cache_budget = kwargs["cache_budget"]
+    window_size = kwargs["window_size"]
+    window_pool = kwargs["window_pool"]
+    kernel_size = kwargs["kernel_size"]
     
     if output_attentions:
         raise NotImplemented(f"output_attentions should be set to False!")
@@ -565,7 +555,11 @@ def llama_sdpa_attn_forward_(
         attn_mask=None,
         pos_weight=pos_weight_,
         scale_factor=scale_factor,
-        shrink_factor=shrink_factor
+        shrink_factor=shrink_factor,
+        init_f=init_f,
+        window_size=window_size,
+        window_pool=window_pool,
+        kernel_size=kernel_size,
     )
     # modified to adapt falcon
     if calss_name == "FalconAttention":
