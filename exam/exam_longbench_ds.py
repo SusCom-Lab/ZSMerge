@@ -82,8 +82,8 @@ model2prompt = {
 model2maxlen = {
     "Llama-2-7b-hf": 3500,
     "Mistral-7B-Instruct-v0.3": 31500,
-    "Llama-3-8B-Instruct": 7950,
-    "Meta-Llama-3-8B": 7950,
+    "Llama-3.1-8B-Instruct": 7950,
+    "Meta-Llama-3-8B-Instruct": 7950,
     "llama2-7b-chat-4k": 3500,
     "longchat-v1.5-7b-32k": 31500,
     "xgen-7b-8k": 7500,

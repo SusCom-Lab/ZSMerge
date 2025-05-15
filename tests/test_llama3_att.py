@@ -2,7 +2,7 @@ import unittest
 from .test_utils import cls_init, gen_equal
 
 class TestLlama3Generator(unittest.TestCase):
-    model_name="meta-llama/Meta-Llama-3-8B"
+    model_name="meta-llama/Meta-Llama-3-8B-Instruct"
     
     @classmethod
     def setUpClass(cls):
