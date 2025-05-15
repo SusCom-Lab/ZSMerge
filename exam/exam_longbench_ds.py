@@ -209,7 +209,8 @@ def generate_predictions(model, tokenizer, test_data, output_max_len, method, qu
         
         # 生成预测
         outputs = model.generate(
-            **tokenized,
+            # **tokenized,
+            input_ids = tokenized.input_ids,
             max_new_tokens=output_max_len,
             num_beams=1,
             do_sample=False,
