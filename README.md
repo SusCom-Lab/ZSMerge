@@ -47,6 +47,3 @@ bash scripts/e_throughput.sh
 ```bash
 bash scripts/e_rouge.sh
 ```
-## License 📄
-This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
-
