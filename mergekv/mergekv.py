@@ -417,8 +417,8 @@ def cache_args_parse(kwargs, q_len):
     cache_tail = kwargs.get("cache_tail", 0.1)
     scale_factor = kwargs.setdefault("scale_factor", 1)
     shrink_factor = kwargs.setdefault("shrink_factor", 0.98)
-    window_size = kwargs.setdefault("window_size", 8)
-    window_pool = kwargs.setdefault("window_pool", "maxpool")
+    window_size = kwargs.setdefault("window_size") # 8
+    window_pool = kwargs.setdefault("window_pool") # "maxpool"
     kernel_size = kwargs.setdefault("kernel_size", 5)
     kwargs.setdefault("metric", "dot_product")
     kwargs.setdefault("score_update", "max")

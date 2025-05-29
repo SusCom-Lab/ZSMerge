@@ -160,7 +160,10 @@ def initialize_model(model_path, merge, cache_config=None, use_cache=True):
             cache_tail=cache_config['cache_tail'],
             cache_dense=cache_config['cache_dense'],
             metric=cache_config.get('metric', 'dot_product'),
-            scale_factor=cache_config['scale_factor']
+            scale_factor=cache_config['scale_factor'],
+            window_size=cache_config['window_size'],
+            window_pool=cache_config['window_pool'],
+            
         )
         print(cache_config)
     return tokenizer, model
@@ -261,6 +264,8 @@ def main(args):
             'cache_tail': args.cache_tail,
             'cache_dense': args.cache_dense,
             'scale_factor': args.scale_factor,
+            'window_size': args.window_size,
+            'window_pool': args.window_pool,
             'metric': 'dot_product'  # 固定值或可配置参数
         }
         tokenizer, model = initialize_model(
@@ -313,6 +318,8 @@ if __name__ == "__main__":
     cache_group.add_argument("--cache_dense", type=float, default=2.0, help="密集缓存")
     cache_group.add_argument("--scale_factor", type=float, default=0.8, help="缓存缩放因子")
     cache_group.add_argument("--merge", action="store_true", help="是否启用缓存合并")
+    cache_group.add_argument('--window_size', type=int, default=8)
+    cache_group.add_argument('--window_pool', type=str, default='maxpool')
 
     # 生成配置组（原有参数归类）
     gen_group = parser.add_argument_group("生成配置")
