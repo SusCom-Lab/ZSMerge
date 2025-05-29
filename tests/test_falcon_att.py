@@ -1,7 +1,8 @@
 import unittest
-from .test_utils import cls_init, gen_equal
+from .test_utils import cls_init, gen_equal, cleanup_after_test
 
-class TestMistralGenerator(unittest.TestCase):
+@cleanup_after_test
+class TestFalconGenerator(unittest.TestCase):
     model_name="tiiuae/falcon-7b"
     
     @classmethod

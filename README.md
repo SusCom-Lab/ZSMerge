@@ -34,6 +34,8 @@ ACCESS_TOKEN=your_huggingface_key_here
 ```bash
 python -m unittest tests.test_mistral_att
 python -m unittest tests.test_llama_att
+python -m unittest tests.test_llama3_att
+python -m unittest tests.test_falcon_att
 ```
 
 ### Validate throughput
