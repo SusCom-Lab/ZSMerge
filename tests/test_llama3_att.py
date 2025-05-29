@@ -1,6 +1,7 @@
 import unittest
-from .test_utils import cls_init, gen_equal
+from .test_utils import cls_init, gen_equal, cleanup_after_test
 
+@cleanup_after_test
 class TestLlama3Generator(unittest.TestCase):
     model_name="meta-llama/Meta-Llama-3-8B-Instruct"
     

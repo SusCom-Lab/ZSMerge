@@ -1,6 +1,7 @@
 import unittest
-from .test_utils import cls_init, gen_equal
+from .test_utils import cls_init, gen_equal, cleanup_after_test
 
+@cleanup_after_test
 class TestMistralGenerator(unittest.TestCase):
     model_name="mistralai/Mistral-7B-Instruct-v0.3"
     
