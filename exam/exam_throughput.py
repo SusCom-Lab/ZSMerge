@@ -8,6 +8,10 @@ import argparse
 import time
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 from mergekv import AttentionForward as AF
+from dotenv import load_dotenv
+# env
+load_dotenv()
+ACCESS_TOKEN=os.getenv("ACCESS_TOKEN")
 
 
 
@@ -73,13 +77,14 @@ def load_model(model_name, torch_dtype=torch.float16):
     """
     # Load model components
     config = AutoConfig.from_pretrained(model_name)
-    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True, token=ACCESS_TOKEN)
     tokenizer.pad_token = tokenizer.eos_token  # Set pad token to avoid warnings
     
     # Load model with automatic device placement
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        torch_dtype=torch_dtype
+        torch_dtype=torch_dtype,
+        token=ACCESS_TOKEN
     ).to("cuda")  # Explicit GPU placement for benchmarking
     
     return config, tokenizer, model
