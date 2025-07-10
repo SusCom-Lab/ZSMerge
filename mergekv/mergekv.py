@@ -8,6 +8,7 @@ import transformers
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 from transformers.cache_utils import Cache, DynamicCache, StaticCache
 from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding, LlamaAttention, apply_rotary_pos_emb
+from transformers.models.qwen2.modeling_qwen2 import Qwen2SdpaAttention
 # from transformers.models.llama.modeling_llama import repeat_kv
 from dotenv import load_dotenv
 
@@ -25,7 +26,8 @@ global g_llama_sdpa_attn_forward_orgn, g_mistral_sdpa_attn_forward_orgn, g_falco
 g_llama_sdpa_attn_forward_orgn = transformers.models.llama.modeling_llama.LlamaSdpaAttention.forward
 g_mistral_sdpa_attn_forward_orgn = transformers.models.mistral.modeling_mistral.MistralSdpaAttention.forward
 g_falcon_sdpa_attn_forward_orgn = transformers.models.falcon.modeling_falcon.FalconAttention.forward
-
+global g_qwen_sdpa_attn_forward_orgn
+g_qwen_sdpa_attn_forward_orgn = Qwen2SdpaAttention.forward
 
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
@@ -610,11 +612,14 @@ class AttentionForward:
             transformers.models.llama.modeling_llama.LlamaSdpaAttention.forward = args_dec(llama_sdpa_attn_forward_, **kws)
             transformers.models.mistral.modeling_mistral.MistralSdpaAttention.forward = args_dec(llama_sdpa_attn_forward_, **kws)
             transformers.models.falcon.modeling_falcon.FalconAttention.forward = args_dec(llama_sdpa_attn_forward_, **kws)
+            Qwen2SdpaAttention.forward = args_dec(llama_sdpa_attn_forward_, **kws)
         else:
             global g_llama_sdpa_attn_forward_orgn, g_mistral_sdpa_attn_forward_orgn, g_falcon_sdpa_attn_forward_orgn
             transformers.models.llama.modeling_llama.LlamaSdpaAttention.forward = g_llama_sdpa_attn_forward_orgn
             transformers.models.mistral.modeling_mistral.MistralSdpaAttention.forward = g_mistral_sdpa_attn_forward_orgn
             transformers.models.falcon.modeling_falcon.FalconAttention.forward = g_falcon_sdpa_attn_forward_orgn
+            Qwen2SdpaAttention.forward = g_qwen_sdpa_attn_forward_orgn
+
 
 
 

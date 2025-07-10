@@ -36,6 +36,7 @@ python -m unittest tests.test_mistral_att
 python -m unittest tests.test_llama_att
 python -m unittest tests.test_llama3_att
 python -m unittest tests.test_falcon_att
+python -m unittest tests.test_qwen2_att
 ```
 
 ### Validate throughput
