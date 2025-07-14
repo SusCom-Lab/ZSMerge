@@ -8,6 +8,8 @@ import transformers
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 from transformers.cache_utils import Cache, DynamicCache, StaticCache
 from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding, LlamaAttention, apply_rotary_pos_emb
+from transformers.models.qwen2.modeling_qwen2 import Qwen2SdpaAttention
+
 # from transformers.models.llama.modeling_llama import repeat_kv
 from dotenv import load_dotenv
 
@@ -25,7 +27,8 @@ global g_llama_sdpa_attn_forward_orgn, g_mistral_sdpa_attn_forward_orgn, g_falco
 g_llama_sdpa_attn_forward_orgn = transformers.models.llama.modeling_llama.LlamaSdpaAttention.forward
 g_mistral_sdpa_attn_forward_orgn = transformers.models.mistral.modeling_mistral.MistralSdpaAttention.forward
 g_falcon_sdpa_attn_forward_orgn = transformers.models.falcon.modeling_falcon.FalconAttention.forward
-
+global g_qwen2_sdpa_attn_forward_orgn 
+g_qwen2_sdpa_attn_forward_orgn = Qwen2SdpaAttention.forward
 
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
@@ -53,7 +56,7 @@ def de_repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     hidden_states = hidden_states.reshape(*shape_n).sum(axis=2)
     return hidden_states
 
-
+    
 def score_scaled_dot_product_attention(
         query: torch.Tensor ,
         key: torch.Tensor ,
@@ -472,6 +475,8 @@ def llama_sdpa_attn_forward_(
     if calss_name == "FalconAttention":
         past_key_value = kwargs.get("layer_past")
         num_key_value_groups = 1
+    elif calss_name == "Qwen2SdpaAttention":
+        num_key_value_groups = 1
     else:
         num_key_value_groups = self.num_key_value_groups
     # args init
@@ -502,6 +507,15 @@ def llama_sdpa_attn_forward_(
         query_states = query_layer.transpose(1, 2).reshape(batch_size, self.num_heads, query_length, self.head_dim)
         key_states = key_layer.transpose(1, 2).reshape(batch_size, num_kv_heads, query_length, self.head_dim)
         value_states = value_layer.transpose(1, 2).reshape(batch_size, num_kv_heads, query_length, self.head_dim)
+    elif calss_name == "Qwen2SdpaAttention":
+    # 添加 Qwen2 支持
+    query_states = self.q_proj(hidden_states)
+    key_states = self.k_proj(hidden_states)
+    value_states = self.v_proj(hidden_states)
+
+    query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+    key_states = key_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+    value_states = value_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
     else:
         query_states = self.q_proj(hidden_states)
         key_states = self.k_proj(hidden_states)
@@ -610,11 +624,13 @@ class AttentionForward:
             transformers.models.llama.modeling_llama.LlamaSdpaAttention.forward = args_dec(llama_sdpa_attn_forward_, **kws)
             transformers.models.mistral.modeling_mistral.MistralSdpaAttention.forward = args_dec(llama_sdpa_attn_forward_, **kws)
             transformers.models.falcon.modeling_falcon.FalconAttention.forward = args_dec(llama_sdpa_attn_forward_, **kws)
+            Qwen2SdpaAttention.forward = args_dec(llama_sdpa_attn_forward_, **kws)
         else:
             global g_llama_sdpa_attn_forward_orgn, g_mistral_sdpa_attn_forward_orgn, g_falcon_sdpa_attn_forward_orgn
             transformers.models.llama.modeling_llama.LlamaSdpaAttention.forward = g_llama_sdpa_attn_forward_orgn
             transformers.models.mistral.modeling_mistral.MistralSdpaAttention.forward = g_mistral_sdpa_attn_forward_orgn
             transformers.models.falcon.modeling_falcon.FalconAttention.forward = g_falcon_sdpa_attn_forward_orgn
+            Qwen2SdpaAttention.forward = g_qwen2_sdpa_attn_forward_orgn
 
 
 

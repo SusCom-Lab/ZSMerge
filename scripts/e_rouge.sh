@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # meta-llama/Llama-2-13b-hf
-model_path='meta-llama/Llama-2-7b-hf'
+model_path='Qwen/Qwen1.5-7B'
 device='cuda'
 shots=3
 budget=0.05
