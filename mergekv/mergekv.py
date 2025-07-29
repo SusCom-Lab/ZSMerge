@@ -422,6 +422,7 @@ def cache_args_parse(kwargs, q_len):
     window_size = kwargs.setdefault("window_size") # 8
     window_pool = kwargs.setdefault("window_pool") # "maxpool"
     kernel_size = kwargs.setdefault("kernel_size", 5)
+    out_state = kwargs.setdefault("out_state", 0)
     kwargs.setdefault("metric", "dot_product")
     kwargs.setdefault("score_update", "max")
 
@@ -492,6 +493,7 @@ def llama_sdpa_attn_forward_(
     window_size = kwargs["window_size"]
     window_pool = kwargs["window_pool"]
     kernel_size = kwargs["kernel_size"]
+    out_state = kwargs["out_state"]
     
     if output_attentions:
         raise NotImplemented(f"output_attentions should be set to False!")
@@ -577,7 +579,51 @@ def llama_sdpa_attn_forward_(
         return attn_output, past_key_value
         
     attn_output = self.o_proj(attn_output)
+    # if bias measure
+    if out_state:
+        key_states_2 = past_key_value.key_cache[layer_idx]
+        value_states_2 = past_key_value.value_cache[layer_idx]
+        pos_weight_2 = past_key_value.pos_weight[layer_idx]
+        
+        key_states_2 = repeat_kv(key_states_2, num_key_value_groups)
+        value_states_2 = repeat_kv(value_states_2, num_key_value_groups)
+        pos_weight_2 = None if pos_weight_2 is None else repeat_kv(pos_weight_2, num_key_value_groups) 
+        # pos_weight_2[:, :, 0] = 0.0001
+        attn_output_0, scores = score_scaled_dot_product_attention(
+            query_states[:, :, -1:, :],
+            key_states_2,
+            value_states_2,
+            attn_mask=None,
+            pos_weight=pos_weight_2,
+            scale_factor=0,
+            shrink_factor=shrink_factor,
+            init_f=False,
+            window_size=window_size,
+            window_pool=window_pool,
+            kernel_size=kernel_size,
+        )
+        attn_output_1, scores = score_scaled_dot_product_attention(
+            query_states[:, :, -1:, :],
+            key_states_2,
+            value_states_2,
+            attn_mask=None,
+            pos_weight=pos_weight_2,
+            scale_factor=1,
+            shrink_factor=shrink_factor,
+            init_f=False,
+            window_size=window_size,
+            window_pool=window_pool,
+            kernel_size=kernel_size,
+        )
+        
+        attn_output_ = torch.concat([attn_output_0, attn_output_1], axis=0).transpose(1, 2).contiguous()
+        attn_output_ = attn_output_.view(bsz * 2, 1, -1)
 
+        if calss_name != "FalconAttention":
+            attn_output_ = self.o_proj(attn_output_)
+        # print(f"{layer_idx = }, {key_states_.shape = }, {key_states_2.shape = }")
+        # print(f"{attn_output.shape = }")
+        self.out_state = torch.concat([attn_output[:, -1:], attn_output_], axis=0)
     return attn_output, None, past_key_value
 
 
