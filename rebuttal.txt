@@ -1,0 +1,366 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{textcomp} % Added for better character support
+\usepackage{lipsum} % For placeholder text, can be removed
+
+% --- Define colors and styles ---
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.95}
+
+% --- Define a basic Markdown language for listings ---
+\lstdefinelanguage{Markdown}{
+  keywords={true,false,null},
+  keywordstyle=\color{blue}\bfseries,
+  ndkeywords={1., 2., 3., 4., 5.},
+  ndkeywordstyle=\color{black}\bfseries,
+  identifierstyle=\color{black},
+  sensitive=false,
+  comment=[l]{\#},
+  morecomment=[s][\itshape]{*}{*},
+  morecomment=[s][\bfseries]{**}{**},
+  commentstyle=\color{codegreen},
+  stringstyle=\color{codepurple},
+  morestring=[b]',
+  morestring=[b]",
+  morestring=[s]{`}{`}
+}
+
+% --- Style for the response box ---
+% This creates a framed box with a light gray background for your responses.
+\lstdefinestyle{responsebox}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2,
+    frame=single, % Adds a frame around the code
+    framerule=0.5pt,
+    framesep=5pt,
+    rulecolor=\color{black}
+}
+
+\title{\textbf{Rebuttal for NeurIPS 2025 Submission 9868: ZSMerge}}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+
+%----------------------------------------------------------------%
+% Reviewer YWf6
+%----------------------------------------------------------------%
+\section*{Reviewer YWf6 (Rating: 4/6, Confidence: 3/5)}
+
+\subsection*{Reviewer's Comments}
+
+\paragraph{Summary:}
+This paper introduces ZSMerge, a zero-shot key-value cache compression framework to enable long-context inference for large language models (LLMs). The method combines (1) fine-grained head-level adaptive budget allocation, (2) cumulative contribution evaluation with exponential decay, (3) residual token merging via momentum-style weighted updates, and (4) a compensated attention scoring mechanism to preserve attention distribution. Extensive experiments on LLaMA2-7B, Falcon-7B, and Mistral-7B show up to 20x compression, maintaining generation quality, and achieving 3x throughput speedup for sequences as long as 54K tokens. The authors claim compatibility with diverse LLM backbones without retraining, i.e., true zero-shot KV compression.
+
+\paragraph{Strengths And Weaknesses:}
+\textbf{Strengths}
+\begin{itemize}[leftmargin=*]
+    \item The paper is well-structured and easy to understand.
+    \item Motivation is clear by analyzing drawbacks of eviction-based and token-merging methods.
+    \item The residual token merging mechanism is interesting and aligns with existing clustering or aggregation intuition.
+\end{itemize}
+\textbf{Weaknesses}
+\begin{itemize}[leftmargin=*]
+    \item The baselines are slightly outdated. Many recent ICLR 2025 works (e.g., FlexPrefill, Think, OmniKV) have emerged that also address KV compression. Those should be compared to strengthen the baseline section.
+    \item It would be valuable to evaluate on models such as Yi or Qwen to verify the effectiveness of the proposed method.
+    \item It would be valuable to evaluate on datasets such as RULER or InfinitBench to verify the effectiveness of the proposed method.
+\end{itemize}
+
+\paragraph{Questions:}
+\begin{enumerate}[leftmargin=*]
+    \item Have you considered testing ZSMerge on newer open LLMs (Yi, Qwen) to verify whether the zero-shot KV compression still holds across different backbone models?
+    \item Would it be possible to extend evaluations to other long-context datasets, for example using Bench benchmarks with contexts beyond 100K tokens?
+    \item Why were newer baselines like FlexPrefill, Think, or OmniKV excluded? These methods seem very relevant.
+    \item Do you have any mathematical analysis of information loss for the merged tokens themselves, not just the uncompressed tokens?
+    \item How difficult would it be to adapt ZSMerge to a distributed multi-GPU inference environment?
+\end{enumerate}
+
+\subsection*{Our Response}
+% 我们提交的markdown回复可以直接在openreview框里预览
+\begin{lstlisting}[language=Markdown, style=responsebox]
+---
+***General Response***
+---
+We thank all reviewers for your thoughtful feedback. The field of KV cache compression is evolving rapidly, with many strong works recently proposed (e.g., NSA, MoBA, FlexPrefill, ThinK, OmniKV, InfiniPot). These methods approach the challenge from diverse perspectives:
+
+- **Training-time integration** with additional modules and importance networks (NSA, MoBA).
+- **Prefill-only one-shot compression** without dynamic adjustment in decoding (FlexPrefill, SnapKV).
+- **System-level offloading and dynamic activation**, trading GPU memory for CPU memory and bandwidth (OmniKV).
+- **Prompt augmentation and cache distillation** to guide salient token selection (InfiniPot).
+- **Channel-level pruning**, orthogonal to token-level compression (ThinK).
+
+In contrast, **ZSMerge is a lightweight, arithmetic, white-box, and theory-grounded framework for token-level KV cache compression along the sequence dimension**. Its design fully decouples from retraining, quantization, prompt modification, or channel-wise pruning, isolating the effectiveness of the proposed approach itself. This independence not only provides a clear theoretical foundation but also makes ZSMerge highly compatible with the above methods, leaving substantial room for future integration.
+
+Regarding **model and dataset choices**, we initially aligned with those used by the closest baselines (STREAMING, H2O, LESS) to ensure fair comparison. ZSMerge is architecture-agnostic, and we have already extended it to **newer backbones such as LLaMA-3**, with results included in the supplementary material. We are also expanding evaluations on **recent models such as Qwen and Yi**, and on **long-context benchmarks like RULER and InfinityBench**.
+
+These clarifications and forthcoming extensions strengthen the work, situate ZSMerge clearly in the evolving landscape, and highlight its contribution as a **zero-shot, token-level compression framework with broad compatibility and future extensibility**.
+
+---
+***Reviewer Response***
+---
+
+We sincerely thank you for your positive assessment and valuable, insightful feedback. We address your question and concerns below:
+
+1. **On newer models (e.g., LLaMA3, Qwen, Yi)** *(Question 1)*
+
+   We have already extended ZSMerge to **LLaMA3 and Qwen**, as shown in the supplementary material. The results confirm that the zero-shot KV compression holds across these stronger backbones. Additional experiments on Yi and other recent models will be included in the updated preprint version.
+
+2. **On longer-context benchmarks (e.g., RULER, InfinityBench)**  *(Question 2)*
+
+   We agree that longer-context datasets would provide stronger evidence. We plan to include experiments on **RULER** and **InfinityBench** in the revised version to further validate ZSMerge’s effectiveness under extreme sequence lengths.
+
+3. **On comparison with recent baselines (e.g., FlexPrefill, ThinK, OmniKV)**   *(Question 3)*
+
+   As noted in the General Response, these methods adopt different design philosophies:  
+   - *Training-time modules* (NSA, MoBA)  
+   - *Prefill-only compression* without dynamic decoding adjustment (FlexPrefill, SnapKV)  
+   - *System-level offloading and dynamic activation* trading GPU memory for CPU resources (OmniKV)  
+   - *Channel-level pruning* orthogonal to token-level compression (ThinK)  
+
+   We prioritized baselines (STREAMING, H2O, LESS) that share the closest methodological scope with ZSMerge. Nevertheless, we acknowledge the importance of these recent works and will incorporate more comparisons and discussion in the revision.
+
+4. **On mathematical analysis of information loss** *(Question 4)*
+
+   Thank you for the suggestion. The residual merging in ZSMerge uses **attention-weighted arithmetic aggregation**, and we provide theoretical justification for contribution preservation. In the revised version, we will include a more detailed analysis of the approximation error introduced by token merging.
+
+5. **On adapting ZSMerge to distributed multi-GPU inference** *(Question 5)*
+
+   ZSMerge introduces no new parameters or architectural modifications. It uses a **monkey-patched forward pass** for attention, with auxiliary values (s, w) aligned to KV cache formats. This makes it lightweight, plug-and-play, and fully compatible with **DP, PP, and TP** settings. It's per-head independence ensures consistent compression ratios without interfering with fine-grained tensor parallelism. ZSMerge can also complement orthogonal approaches such as channel-level pruning (ThinK) or cache offloading (OmniKV).
+
+\end{lstlisting}
+
+\newpage
+
+%----------------------------------------------------------------%
+% Reviewer VXFV
+%----------------------------------------------------------------%
+\section*{Reviewer VXFV (Rating: 2/6, Confidence: 5/5)}
+
+\subsection*{Reviewer's Comments}
+\paragraph{Summary:}
+This paper introduces ZSMerge, a training-free KV cache compression framework for long-context LLM inference. By combining head-level token importance estimation, residual token merging, and attention score compensation, ZSMerge achieves zero-shot, parameter-free compression with significant memory and throughput gains. The method is evaluated primarily on LLaMA2-7B and compared to a few prior baselines.
+
+\paragraph{Strengths And Weaknesses:}
+\textbf{Pros}
+\begin{itemize}[leftmargin=*]
+    \item Neat and clear idea: The proposed method is conceptually simple yet effective, combining sparse retention and residual merging in a unified framework.
+    \item Training-free and architecture-agnostic: ZSMerge requires no retraining and integrates easily into existing LLMs.
+    \item Well-written: The paper is clearly structured and easy to follow, with clean explanations and helpful diagrams.
+\end{itemize}
+\textbf{Cons}
+\begin{itemize}[leftmargin=*]
+    \item Limited experimental coverage: The method is only validated on LLaMA2 and a few older models (e.g., Mistral-7B, Falcon-7B), without evaluation on more recent strong long-context models such as Yi, Qwen2, or Mixtral.
+    \item Weak baseline comparison: Important recent baselines such as NSA, MOBA, and even SnapKV (in some key results) are missing, limiting the strength of the empirical claims.
+    \item Benchmark coverage is insufficient: The paper mainly uses XSum and LongBench. Stronger and more diverse long-context benchmarks like GSM8K-Infinite or RULER should be included to better validate reasoning and QA performance.
+\end{itemize}
+
+\subsection*{Our Response}
+\begin{lstlisting}[language=Markdown, style=responsebox]
+---
+***General Response***
+---
+We thank all reviewers for your thoughtful feedback. The field of KV cache compression is evolving rapidly, with many strong works recently proposed (e.g., NSA, MoBA, FlexPrefill, ThinK, OmniKV, InfiniPot). These methods approach the challenge from diverse perspectives:
+
+- **Training-time integration** with additional modules and importance networks (NSA, MoBA).
+- **Prefill-only one-shot compression** without dynamic adjustment in decoding (FlexPrefill, SnapKV).
+- **System-level offloading and dynamic activation**, trading GPU memory for CPU memory and bandwidth (OmniKV).
+- **Prompt augmentation and cache distillation** to guide salient token selection (InfiniPot).
+- **Channel-level pruning**, orthogonal to token-level compression (ThinK).
+
+In contrast, **ZSMerge is a lightweight, arithmetic, white-box, and theory-grounded framework for token-level KV cache compression along the sequence dimension**. Its design fully decouples from retraining, quantization, prompt modification, or channel-wise pruning, isolating the effectiveness of the proposed approach itself. This independence not only provides a clear theoretical foundation but also makes ZSMerge highly compatible with the above methods, leaving substantial room for future integration.
+
+Regarding **model and dataset choices**, we initially aligned with those used by the closest baselines (STREAMING, H2O, LESS) to ensure fair comparison. ZSMerge is architecture-agnostic, and we have already extended it to **newer backbones such as LLaMA-3**, with results included in the supplementary material. We are also expanding evaluations on **recent models such as Qwen and Yi**, and on **long-context benchmarks like RULER and InfinityBench**.
+
+These clarifications and forthcoming extensions strengthen the work, situate ZSMerge clearly in the evolving landscape, and highlight its contribution as a **zero-shot, token-level compression framework with broad compatibility and future extensibility**.
+
+---
+***Reviewer Response***
+---
+
+1.  **On expanding model evaluation (Yi, Qwen2, Mixtral)...**
+
+2.  **Regarding the inclusion of newer baselines (NSA, MOBA)...**
+
+We appreciate the reviewer’s suggestion to discuss recent works such as NSA and MoBA. These methods indeed represent an important line of research in KV cache compression. To clarify their positioning relative to ZSMerge:
+
+- **NSA (Neural Selection Attention)**: This approach integrates additional MLP-based compressor modules and importance scoring networks jointly trained with the attention mechanism. While powerful, it modifies the attention computation paradigm and requires retraining with substantial computational cost and large-scale data.
+
+- **MoBA (Mixture of Block Attention)**: This method performs block-wise selection using gating mechanisms inspired by Mixture-of-Experts routing. The design is effective at a coarse-grained block level, but relies on auxiliary selection networks and is not optimized for token-level compression.
+
+These methods share two key characteristics:  
+- **Training dependence and architectural coupling**: They are tied to retraining or fine-tuning, which can be prohibitive for many real-world LLM deployment scenarios.  
+- **Coarse granularity**: Their gating or routing strategies make them well-suited for block-level pruning, but less efficient for fine-grained token-level management.
+
+In contrast, **ZSMerge is a lightweight, training-free, and token-level method**. Its design is fully plug-and-play, requiring no modification to the underlying architecture. This allows ZSMerge to provide complementary benefits to NSA and MoBA, for example, token-level residual merging within the blocks already selected by block-wise strategies. 
+
+Indeed, we view ZSMerge not as a competitor but as a **building block that can integrate with such block-level methods** to create more comprehensive KV cache compression pipelines. This synergy is part of our ongoing work, and we believe it highlights the value of ZSMerge’s simplicity and modularity.
+
+3.  **On diversifying benchmark datasets (GSM8K-Infinite, RULER)...**
+
+\end{lstlisting}
+
+\newpage
+
+%----------------------------------------------------------------%
+% Reviewer DL7K
+%----------------------------------------------------------------%
+\section*{Reviewer DL7K (Rating: 4/6, Confidence: 4/5)}
+
+\subsection*{Reviewer's Comments}
+\paragraph{Summary:}
+The paper proposes ZSMerge, a training-free method to compress the KV cache in LLMs. Specifically, the method divides the compressed KV cache into three components: the proximal part (P), which retains recent tokens; the context preservation part (C), which stores tokens with high attention scores; and the residual part (R), which compresses evicted tokens. Tokens for C are selected using an exponential moving average of attention scores, while evicted tokens are merged into the closest residual slot (R) based on key similarity. During the decoding stage, the total KV cache size does not exceed the capacity. Experiments on various datasets and models demonstrate that ZSMerge achieves higher compression ratios and better throughput compared to competitors such as H2O and LESS.
+
+\paragraph{Strengths And Weaknesses:}
+\textbf{Strengths}
+\begin{itemize}[leftmargin=*]
+    \item The core idea of ZSMerge, partitioning the KV cache into three components in a training-free manner, is novel and intuitive.
+    \item The method includes nice details to minimize the negative effects of compression by introducing mechanisms such as moving-average-style contribution tracking, residual token merging, and attention output stabilization.
+\end{itemize}
+\textbf{Weaknesses}
+\begin{itemize}[leftmargin=*]
+    \item Evaluation on Llama2, Falcon, and Mistral is somewhat limited (outdated) and would benefit from including more recent models, such as Llama3 and Qwen2.5. In addition, experiments under 8K context length seem relatively short – please consider trying at least 16K and 32K to demonstrate the advantage of this work better.
+    \item Please compare the work with InfiniPot (Infinite Context Processing on Memory-constrained LLMs, EMNLP 2024), which also adopts a fixed KV cache budget and continual compression. Furthermore, it periodically compresses the KV rather than at every step, which is important to reduce the runtime overhead.
+    \item It would strengthen the paper to evaluate on much longer-context datasets, such as Needle-in-a-Haystack.
+    \item Some implementation details can be improved. For throughput measurements, what inference backend and setup were used (vLLM, flash attention, quantization)? Were the computational overheads for compression included in throughput results? For positional encoding, was RoPE applied before or after merging? How is positional bias preserved when tokens are merged?
+    \item (minor) During generation, the model should additionally store the exponentially updated score (s) and count (w). This may add minor memory and computation overhead for state tracking.
+\end{itemize}
+
+\paragraph{Questions:}
+\begin{enumerate}[leftmargin=*]
+    \item To make the prefill stage fully parallelizable, it seems necessary to apply a different strategy than the token-by-token compression used during decoding. How is compression handled during prefill? Is it run incrementally, or in batch mode?
+    \item How is the attention score computed across layers and attention heads? It seems the method aims at per-head compression; please clarify this point.
+    \item Are there explicitly preserved front slots for attention sink tokens?
+    \item For completeness, it would be beneficial if the paper provides ablation studies on key aspects of the method (e.g., importance of contribution evaluation and attention output stabilization, effect of lambda coefficient and budget allocation strategies, etc.)
+\end{enumerate}
+
+\subsection*{Our Response}
+\begin{lstlisting}[language=Markdown, style=responsebox]
+
+---
+***Reviewer Response***
+---
+
+We sincerely thank you for your positive assessment and valuable, insightful feedback. We address your question and concerns below:
+
+1. **On compression during the prefill stage (Question 1)**  
+   You are correct that prefill requires special handling. We adopt a **group-based batch merging strategy**, where tokens are evenly distributed into residual slots based on their spatial arrangement and merged via arithmetic averaging. This ensures prefill remains fully parallelizable without token-by-token overhead.
+
+2. **On per-head attention score computation**  
+   Compression is performed **independently per head**, without crossing heads or layers. In GQA, a single KV head shared across multiple query heads is treated as one head, with scores averaged across the associated queries.
+
+3. **On attention sink tokens**  
+   No additional reservation is needed. Attention sink tokens are naturally preserved by the **context component**, since their contribution scores remain consistently high and they are prioritized during selection.
+
+4. **On ablation studies**  
+   As noted in the supplementary material, we conducted ablation studies analyzing the sensitivity to the lambda coefficient, the effect of contribution evaluation, and the impact of attention output stabilization. In the revised version, we will expand these results and provide relative error plots for clarity. For example, the following table shows error under different cache sizes:
+
+   | Cache Size | 80%       | 50%       | 20%       | 10%       | 5%        |
+   |------------|-----------|-----------|-----------|-----------|-----------|
+   | Eviction   | 4.44e-07  | 2.50e-03  | 5.64e-02  | 1.25e-01  | 2.19e-01  |
+   | Merge      | 4.44e-07  | 2.72e-04  | 2.23e-02  | 7.02e-02  | 1.37e-01  |
+
+   These results highlight the stability benefits of the residual merging mechanism.
+
+---
+
+*Note:* Concerns about newer models, datasets, and baseline coverage raised by other reviewers have been addressed in the General Response. We will incorporate those clarifications and expanded experiments in the revised version.
+
+
+\end{lstlisting}
+
+\newpage
+
+%----------------------------------------------------------------%
+% Reviewer Cbcq
+%----------------------------------------------------------------%
+\section*{Reviewer Cbcq (Rating: 2/6, Confidence: 4/5)}
+
+\subsection*{Reviewer's Comments}
+\paragraph{Summary:}
+This paper proposes ZSMerge, a dynamic KV cache compression framework. ZSMerge uses fine-grained memory allocation at head level. The evicted tokens are merged with compensated attention scoring. Experiments show that ZSMerge can improve both memory efficiency and inference speed.
+
+\paragraph{Strengths And Weaknesses:}
+\textbf{Strengths:}
+\begin{itemize}[leftmargin=*]
+    \item The compensation mechanism in (8) seems to be somewhat novel, although similar but not exactly the same idea has appeared in other papers.
+\end{itemize}
+\textbf{Weaknesses:}
+\begin{itemize}[leftmargin=*]
+    \item The idea is pretty straightforward and similar ideas have appeared in other papers.
+    \item The performance on Longbench is only comparable to SnapKV, with no significant improvement.
+    \item The experiments is done on Llama 2, not Llama 3.
+\end{itemize}
+
+\paragraph{Questions:}
+\begin{enumerate}[leftmargin=*]
+    \item What's the performance for Llama 3? Llama 3 performs significantly better than Llama 2 on many Longbench tasks, but it may also be more sensitive to KV cache compression.
+    \item What's "learned transformations" referring to on Line 128?
+    \item Why is the attenuation of the attention to 0.002 in 300 steps a good choice (line 139)?
+\end{enumerate}
+
+\subsection*{Our Response}
+\begin{lstlisting}[language=Markdown, style=responsebox]
+---
+***General Response***
+---
+We thank all reviewers for your thoughtful feedback. The field of KV cache compression is evolving rapidly, with many strong works recently proposed (e.g., NSA, MoBA, FlexPrefill, ThinK, OmniKV, InfiniPot). These methods approach the challenge from diverse perspectives:
+
+- **Training-time integration** with additional modules and importance networks (NSA, MoBA).
+- **Prefill-only one-shot compression** without dynamic adjustment in decoding (FlexPrefill, SnapKV).
+- **System-level offloading and dynamic activation**, trading GPU memory for CPU memory and bandwidth (OmniKV).
+- **Prompt augmentation and cache distillation** to guide salient token selection (InfiniPot).
+- **Channel-level pruning**, orthogonal to token-level compression (ThinK).
+
+In contrast, **ZSMerge is a lightweight, arithmetic, white-box, and theory-grounded framework for token-level KV cache compression along the sequence dimension**. Its design fully decouples from retraining, quantization, prompt modification, or channel-wise pruning, isolating the effectiveness of the proposed approach itself. This independence not only provides a clear theoretical foundation but also makes ZSMerge highly compatible with the above methods, leaving substantial room for future integration.
+
+Regarding **model and dataset choices**, we initially aligned with those used by the closest baselines (STREAMING, H2O, LESS) to ensure fair comparison. ZSMerge is architecture-agnostic, and we have already extended it to **newer backbones such as LLaMA3**, with results included in the supplementary material. We are also expanding evaluations on **recent models such as Qwen and Yi**, and on **long-context benchmarks like RULER and InfinityBench**.
+
+These clarifications and forthcoming extensions strengthen the work, situate ZSMerge clearly in the evolving landscape, and highlight its contribution as a **zero-shot, token-level compression framework with broad compatibility and future extensibility**.
+
+---
+***Reviewer Response***
+---
+
+1. **On performance with LLaMA3**  
+   As shown in the supplementary material (Appendix C.3), ZSMerge has been evaluated on LLaMA3. The results confirm that performance is superior to LLaMA2, particularly on long-context tasks, with near-lossless compression in most cases. These findings demonstrate that the proposed approach remains effective even with stronger and more recent backbones.
+
+2. **Clarification of "learned transformations"**  
+   Thank you for pointing this out. We realize the phrase "learned transformations" in Line 128 may cause confusion.  
+   In our method, the residual component (K_r, V_r) is **not generated by training new parameters**. Instead, it is constructed via deterministic aggregation of historically evicted tokens, with aggregation weights derived from the model's already learned attention signals.  
+   Thus, the term "learned" was intended to emphasize leveraging pretraining-acquired attention representations rather than introducing new trainable modules. To avoid ambiguity, we will revise the wording to **"attention-weighted aggregation transformations"** in the final version.
+
+3. **On the choice of attention attenuation**  
+   The setting lambda = 0.98 is an **empirical choice**, not a theoretically unique optimum. The example of attenuation to ~0.002 after 300 steps was provided only to give readers an intuitive sense of the decay rate, as 300 roughly corresponds to the length of a typical paragraph.  
+   In practice, lambda does not enforce a hard cutoff. Instead, it enables a **smooth transition between short-term and long-term contributions**, distinguishing our method from fixed-window approaches such as SnapKV. We will clarify that the "300-step attenuation" is **illustrative rather than prescriptive** in the revised version.
+
+4. **On the concern that the idea is "straightforward" and similar to prior work**  
+   We respectfully disagree. The strength of ZSMerge lies precisely in being a **simple yet effective solution**. As the saying goes, *simplicity is the ultimate sophistication* --ZSMerge embodies this principle through its residual compensation mechanism, which is intuitive, clearly defined, and supported by solid theoretical guarantees, ensuring both robustness and generality.
+
+
+5. **On the comparison with SnapKV**  
+
+   We would like to clarify that **SnapKV follows a prefill-only one-shot compression strategy without dynamic adjustment during decoding**. This design grants it a natural advantage in reported results, but it also means that SnapKV is inherently **unable to address the issue of continuously growing memory usage during long decoding**, as illustrated in Figure 1 of our paper. In contrast, ZSMerge dynamically manages the cache throughout the entire generation process, effectively preventing out-of-memory failures in long-sequence inference.
+
+
+\end{lstlisting}
+
+\end{document}

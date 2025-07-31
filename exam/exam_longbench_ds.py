@@ -4,6 +4,36 @@ python exams/run_longbench_ds.py     \
     --model_path mistralai/Mistral-7B-Instruct-v0.3     \
     --save_dir ./results/longbench_ds \
     --merge
+    
+            'merge': args.merge,
+            'cache_budget': args.max_capacity_prompts,
+            'cache_tail': args.cache_tail,
+            'cache_dense': args.cache_dense,
+            'scale_factor': args.scale_factor,
+            'window_size': args.window_size,
+            'window_pool': args.window_pool,
+            
+python exam/exam_longbench_ds.py     \
+    --model_path Qwen/Qwen2-7B-Instruct     \
+    --save_dir ./results/longbench_ds \
+    --device cuda:0 \
+    --max_capacity_prompts 8000 \
+    --cache_tail 0.4 \
+    --cache_dense 0.1 \
+    --scale_factor 1.0 \
+    --window_size 12 \
+    --merge
+    
+python exam/exam_longbench_ds.py     \
+    --model_path 01-ai/Yi-1.5-6B     \
+    --save_dir ./results/longbench_ds \
+    --device cuda:0 \
+    --max_capacity_prompts 1024 \
+    --cache_tail 0.4 \
+    --cache_dense 0.1 \
+    --scale_factor 1.0 \
+    --window_size 12 \
+    --merge
 '''
 import os
 import sys
@@ -91,7 +121,9 @@ model2maxlen = {
     "chatglm2-6b": 31500,
     "chatglm2-6b-32k": 31500,
     "chatglm3-6b-32k": 31500,
-    "vicuna-v1.5-7b-16k": 15500
+    "vicuna-v1.5-7b-16k": 15500,
+    "Qwen2-7B-Instruct": 7950,
+    'Yi-1.5-6B': 10000,
 }
 
 # 随机种子设置
@@ -148,7 +180,6 @@ def initialize_model(model_path, merge, cache_config=None, use_cache=True):
         model_path,
         torch_dtype=torch.float16,
         low_cpu_mem_usage=True,
-        device_map="auto",
         use_cache=use_cache,
     ).to(device).eval()
 
@@ -163,7 +194,7 @@ def initialize_model(model_path, merge, cache_config=None, use_cache=True):
             scale_factor=cache_config['scale_factor'],
             window_size=cache_config['window_size'],
             window_pool=cache_config['window_pool'],
-            
+            # kernel_size=12,
         )
         print(cache_config)
     return tokenizer, model
@@ -186,7 +217,7 @@ def generate_predictions(model, tokenizer, test_data, output_max_len, method, qu
                     existing_ids.add(data["_id"])
                 except json.JSONDecodeError:
                     continue
-    print(f"out_file ({len(existing_ids)}):<{result_file}>")
+    print(f"out_file ({len(existing_ids)}):< {result_file} >")
     
     # 过滤未处理的数据
     filtered_data = [ex for ex in test_data if ex["_id"] not in existing_ids]
@@ -314,9 +345,9 @@ if __name__ == "__main__":
     cache_group = parser.add_argument_group("KV缓存配置")
     cache_group.add_argument("--method", type=str, required=False, )  # 明确可选方法 help="KV缓存处理方法")
     cache_group.add_argument("--max_capacity_prompts", type=int, default=512, help="最大提示词缓存容量")
-    cache_group.add_argument("--cache_tail", type=float, default=0.2, help="尾部缓存保留比例")
-    cache_group.add_argument("--cache_dense", type=float, default=2.0, help="密集缓存")
-    cache_group.add_argument("--scale_factor", type=float, default=0.8, help="缓存缩放因子")
+    cache_group.add_argument("--cache_tail", type=float, default=0.1, help="尾部缓存保留比例")
+    cache_group.add_argument("--cache_dense", type=float, default=0.1, help="密集缓存")
+    cache_group.add_argument("--scale_factor", type=float, default=1.0, help="缓存缩放因子")
     cache_group.add_argument("--merge", action="store_true", help="是否启用缓存合并")
     cache_group.add_argument('--window_size', type=int, default=8)
     cache_group.add_argument('--window_pool', type=str, default='maxpool')

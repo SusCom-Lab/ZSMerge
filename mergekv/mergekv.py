@@ -181,6 +181,63 @@ def topk_split(E, S, k):
     # B: Tensor of shape [b, t - k, d]
 
 
+def topk_split_new(E, S, k, tail_max):
+    """
+    根据分数张量 S，将数据张量 E 分割成头部 A 和尾部 B。
+    头部 A 包含得分最高的 k 个元素。
+    尾部 B 包含剩余元素中得分最高的 tail_max 个元素，并保持其原始相对顺序。
+
+    参数:
+    E (Tensor): 输入的数据张量，形状为 [b, t, d]。
+    S (Tensor): 分数张量，形状为 [b, t]。
+    k (int): 头部 A 的大小。
+    tail_max (int): 尾部 B 的大小。如果剩余元素数量少于 tail_max，则取所有剩余元素。
+
+    返回值:
+    A (Tensor): 头部张量，形状为 [b, k, d]。
+    B (Tensor): 尾部张量，形状为 [b, actual_tail_max, d]。
+    topk_values (Tensor): A 中元素对应的分数，形状为 [b, k]。
+    tail_values (Tensor): B 中元素对应的分数，形状为 [b, actual_tail_max]。
+    """
+    b, t, d = E.shape
+
+    # --- 核心逻辑改动 ---
+
+    # Step 1: 对整个序列的分数进行排序，获取所有元素的索引，按分数从高到低排列
+    # _, sorted_indices 的下划线表示我们不关心排序后的分数，只关心索引
+    _, sorted_indices = torch.sort(S, dim=1, descending=True)
+
+    # Step 2: 从排序好的索引中，直接划分出头部和尾部的索引
+    # 头部 A 的索引：前 k 个
+    topk_indices = sorted_indices[:, :k]
+
+    # 尾部 B 的索引：紧接着头部的后 tail_max 个
+    # 需要处理 t-k < tail_max 的边界情况
+    num_remaining = t - k
+    actual_tail_max = min(tail_max, num_remaining)
+    
+    # 如果 actual_tail_max 是 0，则 tail_indices 会是空张量，后续操作也能正确处理
+    tail_indices_sorted_by_score = sorted_indices[:, k : k + actual_tail_max]
+
+    # Step 3: 恢复尾部索引的原始相对顺序
+    # tail_indices_sorted_by_score 目前是按分数排序的。例如，可能是 [8, 3, 5]
+    # 为了保持原始顺序，我们需要对这些索引值本身进行排序，得到 [3, 5, 8]
+    # 这样 gather 的时候就会按原始序列的先后顺序来取元素
+    final_tail_indices, _ = torch.sort(tail_indices_sorted_by_score, dim=1)
+
+    # Step 4: 使用最终确定的索引来收集数据 (Gather)
+    # 收集头部 A (topk_indices 已经是按分数排序的，和 torch.topk 结果一致)
+    A = torch.gather(E, 1, topk_indices.unsqueeze(-1).expand(-1, -1, d))
+    topk_values = torch.gather(S, 1, topk_indices)
+
+    # 收集尾部 B (使用恢复了原始顺序的 final_tail_indices)
+    # 如果 actual_tail_max 为 0，final_tail_indices 是空的，B 和 tail_values 也会是正确的空张量
+    B = torch.gather(E, 1, final_tail_indices.unsqueeze(-1).expand(-1, -1, d))
+    tail_values = torch.gather(S, 1, final_tail_indices)
+
+    return A, B, topk_values, tail_values
+
+
 def cache_init(
         key_states, value_states, **cache_kwargs
     ):
@@ -205,10 +262,17 @@ def cache_init(
         kv_status_ = kv_status[..., :t_k-cache_tail, :]
         score_ = score[..., :t_k-cache_tail]
         # torch.Size([32, 0, 256]) torch.Size([32, 0]) 32 13 0
-        cache_top, cache_residual, score_top, score_residual = topk_split(
+        
+        # cache_top, cache_residual, score_top, score_residual = topk_split(
+        #     kv_status_.view(n_head, t_k-cache_tail, -1),
+        #     score_.view(n_head, t_k-cache_tail),
+        #     k=cache_top_size,
+        # )
+        cache_top, cache_residual, score_top, score_residual = topk_split_new(
             kv_status_.view(n_head, t_k-cache_tail, -1),
             score_.view(n_head, t_k-cache_tail),
-            k=cache_top_size
+            k=cache_top_size,
+            tail_max=cache_dense * 10
         )
         merge_size, tail_add = divmod(cache_residual.size(-2), cache_dense)
 

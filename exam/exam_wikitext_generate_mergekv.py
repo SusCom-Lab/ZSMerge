@@ -43,7 +43,7 @@ logger = setup_logging()
 
 def get_mergekv_model(args):
     """
-    使用 mergekv 的方法加载、修改并准备 Llama-2 模型。
+    使用 mergekv 的方法加载、修改并准备模型。
     """
     logger.info("Loading model using mergekv.AttentionForward...")
     # 1. 使用 AF.model_load 加载模型和分词器

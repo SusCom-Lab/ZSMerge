@@ -12,3 +12,5 @@ jieba
 fuzzywuzzy
 
 python-dotenv
+
+evaluate
