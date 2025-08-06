@@ -161,7 +161,7 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-
+*.pkl
 # pytype static type analyzer
 .pytype/
 dataset_cache/
