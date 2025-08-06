@@ -1,6 +1,8 @@
 *.log
 *.out
+*.ipynb
 results/
+gsm_infinite/
 *.pt
 .vscode/
 
@@ -162,7 +164,7 @@ dmypy.json
 
 # pytype static type analyzer
 .pytype/
-
+dataset_cache/
 # Cython debug symbols
 cython_debug/
 

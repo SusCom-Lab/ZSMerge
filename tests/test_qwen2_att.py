@@ -4,6 +4,7 @@ from .test_utils import cls_init, gen_equal, cleanup_after_test
 @cleanup_after_test
 class TestQwen2Generator(unittest.TestCase):
     model_name="Qwen/Qwen2-7B-Instruct"
+    model_name="Qwen/Qwen2.5-7B-Instruct"
     
     @classmethod
     def setUpClass(cls):

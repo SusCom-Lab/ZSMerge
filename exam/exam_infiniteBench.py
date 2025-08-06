@@ -17,9 +17,9 @@ output_lengths = {
     "code_run": 12,
     # "code_debug": 12, # temp skip
     "math_find": 1.3,
-    # "math_calc": 43900.0,
+    "math_calc": 43900.0,
     "longdialogue_qa_eng": 3.4,
-    # "longbook_qa_eng": 4800.0,
+    "longbook_qa_eng": 4800.0,
     "longbook_sum_eng": 1100.0,
     "longbook_choice_eng": 5.3,
     "longbook_qa_chn": 6.3,
@@ -188,7 +188,7 @@ def main():
         print(f"#{show_str}#")
         print("#" * (len(show_str) + 2))
         # 构造多级目录：save_dir / model / method / task-cache_size.jsonl
-        task_dir = os.path.join(args.save_dir, clean_name, args.method)
+        task_dir = os.path.join(args.save_dir, clean_name, f"{args.method}-{args.cache_size}")
         os.makedirs(task_dir, exist_ok=True)
         save_file = os.path.join(task_dir, f"{task}-{args.cache_size}.jsonl")
 

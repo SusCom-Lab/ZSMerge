@@ -9,6 +9,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 from transformers.cache_utils import Cache, DynamicCache, StaticCache
 from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding, LlamaAttention, apply_rotary_pos_emb
 from transformers.models.qwen2.modeling_qwen2 import Qwen2SdpaAttention
+# from transformers.models.qwen3.modeling_qwen3 import Qwen3Attention
 # from transformers.models.llama.modeling_llama import repeat_kv
 from dotenv import load_dotenv
 
@@ -89,17 +90,31 @@ def score_scaled_dot_product_attention(
             mask_dtype = torch.float32
             sub_attn_mask = torch.triu(torch.full((t_q, t_k), torch.finfo(mask_dtype).min, dtype=mask_dtype, device=key.device), diagonal=t_k - t_bias + 1)
             sub_attn_mask = sub_attn_mask[None, None, ...]
-        scores = torch.matmul(sub_query, key.transpose(-2, -1))
-        scores = scores * scale
-        if sub_attn_mask is not None:
-            scores = scores + sub_attn_mask
+        # scores = torch.matmul(sub_query, key.transpose(-2, -1))
+        # scores = scores * scale
+        # if sub_attn_mask is not None:
+        #     scores = scores + sub_attn_mask
 
-        # softmax
-        if pos_weight is not None:
-            scores += scale_factor * torch.log(pos_weight)[..., None, :]
-        attn_weights = F.softmax(scores, dim=-1, dtype=value.dtype)
+        # # softmax
+        # if pos_weight is not None:
+        #     scores += scale_factor * torch.log(pos_weight)[..., None, :]
+        # attn_weights = F.softmax(scores, dim=-1, dtype=value.dtype)
 
-        output = torch.matmul(attn_weights, value)
+        # output = torch.matmul(attn_weights, value)
+        
+        with torch.amp.autocast("cuda", dtype=torch.float32):
+            scores = torch.matmul(sub_query, key.transpose(-2, -1))
+            scores = scores * scale
+            if sub_attn_mask is not None:
+                scores = scores + sub_attn_mask
+
+            # softmax
+            if pos_weight is not None:
+                scores += scale_factor * torch.log(pos_weight)[..., None, :]
+            attn_weights = F.softmax(scores, dim=-1) # , dtype=value.dtype
+
+            output = torch.matmul(attn_weights, value)
+        output = output.to(value.dtype)
         if shrink_factor < 1 and t_q > 1:
             shrink_f = torch.pow(shrink_factor, torch.arange(t_q, device=attn_weights.device))
             shrink_f_flipped = torch.flip(shrink_f, dims=[0])
@@ -708,7 +723,7 @@ class AttentionForward:
         num_gpus = torch.cuda.device_count()
 
     @classmethod
-    def model_load(cls, model_name="meta-llama/Llama-2-7b-hf", merge=True, **kws):
+    def model_load(cls, model_name="Qwen/Qwen2-7B-Instruct", merge=True, **kws):
         
         # config = AutoConfig.from_pretrained(model_name)
         tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True, padding_side="left", token=cls.token)
@@ -755,7 +770,7 @@ def main():
     output = model.generate(
         **tokenized_prompts,
         output_attentions = False,
-        max_new_tokens=output_max_len,
+        max_new_tokens=output_len,
         num_beams=1,
         do_sample=False,
         top_p=None,
@@ -768,11 +783,11 @@ def main():
     for q, a in zip(batch_prompts, batch_outputs):
         print("-" * 20, f"Q:\n\t{q}\nA:\n\t{a}", sep="\n")
     
-    AttentionForward.change_mode(merge=True, cache_budget=18)
+    AttentionForward.change_mode(merge=True, cache_budget=10)
     output = model.generate(
         **tokenized_prompts,
         output_attentions = False,
-        max_new_tokens=output_max_len,
+        max_new_tokens=output_len,
         num_beams=1,
         do_sample=False,
         top_p=None,
