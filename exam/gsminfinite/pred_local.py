@@ -12,6 +12,24 @@ sys.path.append(r"/home/ldaphome/seanl/code/mergeKV/")
 from mergekv import AttentionForward as AF
 # import os
 # os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+chat_template = """{% for message in messages %}
+{% if message['role'] == 'system' %}
+<|system|>
+{{ message['content'] }}
+<|end|>
+{% elif message['role'] == 'user' %}
+<|user|>
+{{ message['content'] }}
+<|end|>
+{% elif message['role'] == 'assistant' %}
+<|assistant|>
+{{ message['content'] }}
+<|end|>
+{% endif %}
+{% endfor %}
+
+<|assistant|>
+"""
 
 def dump_dict_to_json(data, filename):
     import os
@@ -41,7 +59,7 @@ def dump_dict_to_json(data, filename):
 class LocalArgs:
     model_path: str = "Qwen/Qwen2-7B-Instruct"
     method: str = "FullKV"
-    device: str = "cuda:0"
+    device: str = "cuda:3"
     cache_size: int = 2048        # KVCache 最大容量
     cache_dense: float = 0.05     # dense cache 比例
     cache_tail: float = 0.1       # 尾部保留比例
@@ -78,7 +96,7 @@ def get_mergekv_model(args):
         out_state=args.out_state,
     )
 
-    model.eval().to(args.device)
+    model.half().eval().to(args.device)
     return tokenizer, model
 
 
@@ -127,6 +145,13 @@ def process_and_save_jsonl(unprocessed_dataset, tokenizer, model, args):
                 messages = record['messages']
                 prompt_text = tokenizer.apply_chat_template(
                     messages,
+                    tokenize=False,
+                    add_generation_prompt=True  # 确保在最后添加生成提示 (如 <|im_start|>assistant)
+                )
+            except ValueError:
+                prompt_text = tokenizer.apply_chat_template(
+                    messages,
+                    chat_template=chat_template,
                     tokenize=False,
                     add_generation_prompt=True  # 确保在最后添加生成提示 (如 <|im_start|>assistant)
                 )
