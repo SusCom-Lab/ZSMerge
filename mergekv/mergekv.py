@@ -294,8 +294,8 @@ def cache_init(
         # special
         sep_id = tail_add * (merge_size + 1)
         cache_residual_m = torch.cat([
-            cache_residual[..., :sep_id, :].view(n_head, tail_add, merge_size + 1, 2 * d_k).sum(axis=-2),
-            cache_residual[..., sep_id:, :].view(n_head, cache_dense - tail_add, merge_size, 2 * d_k).sum(axis=-2),
+            cache_residual[..., :sep_id, :].view(n_head, tail_add, merge_size + 1, 2 * d_k).mean(axis=-2),
+            cache_residual[..., sep_id:, :].view(n_head, cache_dense - tail_add, merge_size, 2 * d_k).mean(axis=-2),
         ], dim=-2)
         if score_update == "max":
             socre_m = torch.cat([
@@ -520,7 +520,7 @@ def cache_args_parse(kwargs, q_len):
         cache_tail = int(cache_tail)
     else:
         raise ValueError(f"invalid arg value: cache_tail=<{cache_tail}>")
-    cache_tail = max(2, cache_tail)
+    # cache_tail = max(2, cache_tail)
     assert cache_tail < cache_budget
     
     # cache_dense
