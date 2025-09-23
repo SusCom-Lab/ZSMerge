@@ -5,6 +5,8 @@ results/
 gsm_infinite/
 *.pt
 .vscode/
+CLAUDE.md
+*.pdf
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

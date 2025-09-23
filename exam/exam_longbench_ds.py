@@ -181,7 +181,7 @@ def initialize_model(model_path, merge, cache_config=None, use_cache=True):
         torch_dtype=torch.float16,
         low_cpu_mem_usage=True,
         use_cache=use_cache,
-    ).to(device).eval()
+    ).half().to(device).eval()
 
     # 初始化模型...
     if merge:  # 集中处理缓存相关参数
@@ -345,8 +345,8 @@ if __name__ == "__main__":
     cache_group = parser.add_argument_group("KV缓存配置")
     cache_group.add_argument("--method", type=str, required=False, )  # 明确可选方法 help="KV缓存处理方法")
     cache_group.add_argument("--max_capacity_prompts", type=int, default=512, help="最大提示词缓存容量")
-    cache_group.add_argument("--cache_tail", type=float, default=0.1, help="尾部缓存保留比例")
-    cache_group.add_argument("--cache_dense", type=float, default=0.1, help="密集缓存")
+    cache_group.add_argument("--cache_tail", type=float, default=0.5, help="尾部缓存保留比例")
+    cache_group.add_argument("--cache_dense", type=float, default=0.02, help="密集缓存")
     cache_group.add_argument("--scale_factor", type=float, default=1.0, help="缓存缩放因子")
     cache_group.add_argument("--merge", action="store_true", help="是否启用缓存合并")
     cache_group.add_argument('--window_size', type=int, default=8)

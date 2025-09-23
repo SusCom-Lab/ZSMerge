@@ -130,6 +130,8 @@ def main():
     parser.add_argument("--score_update", type=str, default='max')
     parser.add_argument("--shots", type=int, default=5)
     parser.add_argument("--seed", type=int, default=42, help="random seed for initialization")
+    parser.add_argument("--prefix", type=str, default="", help="prefix for result file name")
+    parser.add_argument("--sample_num", type=int, default=None, help="limit max number of test cases")
 
     # args
     args = parser.parse_args()
@@ -147,6 +149,8 @@ def main():
     metric = args.metric
     score_update = args.score_update
     shots = args.shots
+    prefix = args.prefix
+    sample_num = args.sample_num
     max_tokens = 128
     dataset = args.dataset
     if dataset == 'cnn':
@@ -168,7 +172,7 @@ def main():
     max_position_embeddings = config.max_position_embeddings
     cache_budget_ = int(cache_budget * max_position_embeddings)
     print(f"config.max_position_embeddings: {config.max_position_embeddings} -> {cache_budget_}")
-    model.eval().to(device)
+    model.eval().half().to(device)
     # method
     AF.change_mode(merge, cache_budget=cache_budget_, cache_tail=cache_tail, cache_dense=cache_dense,
                              metric=metric, score_update=score_update, scale_factor=scale_factor
@@ -182,11 +186,17 @@ def main():
             if line.strip() != '':
                 requests.append(json.loads(line))
 
+    # limit sample number if specified
+    if sample_num is not None:
+        requests = requests[:sample_num]
+        logger.info(f"Limited to {sample_num} samples, total: {len(requests)}")
+
     # infer
+    prefix_str = f"{prefix}_" if prefix else ""
     if dataset == 'cnn':
-        out_file = rf"./results/cnn/cnn_dm_{shots}shot_{model_name.split('/')[-1]}_{args_str}.jsonl"
+        out_file = rf"./results/cnn/{prefix_str}cnn_dm_{shots}shot_{model_name.split('/')[-1]}_{args_str}.jsonl"
     elif dataset == 'xsum':
-        out_file = rf"./results/xsum/xsum_{shots}shot_{model_name.split('/')[-1]}_{args_str}.jsonl"
+        out_file = rf"./results/xsum/{prefix_str}xsum_{shots}shot_{model_name.split('/')[-1]}_{args_str}.jsonl"
     if not (out_dir := Path(out_file).parent).exists():
         os.makedirs(out_dir)
     data_infer(model, tokenizer, requests, max_position_embeddings, max_tokens, out_file)
