@@ -24,7 +24,7 @@ def cls_init(cls):
     print(f"loading model: {model_name}")
     cls.device = AF.device
     tokenizer, model = AF.model_load(model_name=model_name, merge=False)
-    model.eval().to(cls.device)
+    model.eval().half().to(cls.device)
     # 使用weakref代理
     cls._model_ref = weakref.ref(model)
     cls._tokenizer_ref = weakref.ref(tokenizer)
