@@ -1,17 +1,23 @@
+"""
+LongBench Metrics Module
+
+This module provides various evaluation metrics for LongBench datasets including:
+- Text normalization functions
+- F1 scores for QA tasks
+- ROUGE scores for summarization
+- Classification and retrieval scoring
+- Code similarity scoring
+"""
 import re
 import string
+from collections import Counter
 
 import jieba
 from fuzzywuzzy import fuzz
-# import difflib
-
-# from typing import List
-from collections import Counter
 from rouge import Rouge
 
 def normalize_answer(s):
     """Lower text and remove punctuation, articles and extra whitespace."""
-
     def remove_articles(text):
         return re.sub(r"\b(a|an|the)\b", " ", text)
 
@@ -29,8 +35,7 @@ def normalize_answer(s):
 
 
 def normalize_zh_answer(s):
-    """Lower text and remove punctuation, extra whitespace."""
-
+    """Lower text and remove punctuation, extra whitespace for Chinese text."""
     def white_space_fix(text):
         return "".join(text.split())
 
@@ -45,6 +50,7 @@ def normalize_zh_answer(s):
     return white_space_fix(remove_punc(lower(s)))
 
 def count_score(prediction, ground_truth, **kwargs):
+    """Score for counting tasks - extract numbers and compare with ground truth."""
     numbers = re.findall(r"\d+", prediction)
     right_num = 0
     for number in numbers:
@@ -54,6 +60,7 @@ def count_score(prediction, ground_truth, **kwargs):
     return float(final_score)
 
 def retrieval_score(prediction, ground_truth, **kwargs):
+    """Score for English passage retrieval tasks."""
     pattern = r'Paragraph (\d+)'
     matches = re.findall(pattern, ground_truth)
     ground_truth_id = matches[0]
@@ -66,6 +73,7 @@ def retrieval_score(prediction, ground_truth, **kwargs):
     return float(final_score)
 
 def retrieval_zh_score(prediction, ground_truth, **kwargs):
+    """Score for Chinese passage retrieval tasks."""
     pattern = r'段落(\d+)'
     matches = re.findall(pattern, ground_truth)
     ground_truth_id = matches[0]
@@ -78,6 +86,7 @@ def retrieval_zh_score(prediction, ground_truth, **kwargs):
     return float(final_score)
 
 def code_sim_score(prediction, ground_truth, **kwargs):
+    """Score for code similarity using fuzzy string matching."""
     all_lines = prediction.lstrip('\n').split('\n')
     prediction = ""
     for line in all_lines:
@@ -87,6 +96,7 @@ def code_sim_score(prediction, ground_truth, **kwargs):
     return (fuzz.ratio(prediction, ground_truth) / 100)
 
 def classification_score(prediction, ground_truth, **kwargs):
+    """Score for classification tasks with partial matching."""
     em_match_list = []
     all_classes = kwargs["all_classes"]
     for class_name in all_classes:
@@ -102,6 +112,7 @@ def classification_score(prediction, ground_truth, **kwargs):
     return score
 
 def rouge_score(prediction, ground_truth, **kwargs):
+    """Calculate ROUGE-L F1 score for summarization tasks."""
     rouge = Rouge()
     try:
         scores = rouge.get_scores([prediction], [ground_truth], avg=True)
@@ -110,12 +121,14 @@ def rouge_score(prediction, ground_truth, **kwargs):
     return scores["rouge-l"]["f"]
 
 def rouge_zh_score(prediction, ground_truth, **kwargs):
+    """Calculate ROUGE score for Chinese text using jieba tokenization."""
     prediction = " ".join(list(jieba.cut(prediction, cut_all=False)))
     ground_truth = " ".join(list(jieba.cut(ground_truth, cut_all=False)))
     score = rouge_score(prediction, ground_truth)
     return score
 
 def f1_score(prediction, ground_truth, **kwargs):
+    """Calculate F1 score based on token overlap."""
     common = Counter(prediction) & Counter(ground_truth)
     num_same = sum(common.values())
     if num_same == 0:
@@ -126,6 +139,7 @@ def f1_score(prediction, ground_truth, **kwargs):
     return f1
 
 def qa_f1_score(prediction, ground_truth, **kwargs):
+    """Calculate F1 score for English QA tasks with normalization."""
     normalized_prediction = normalize_answer(prediction)
     normalized_ground_truth = normalize_answer(ground_truth)
 
@@ -135,6 +149,7 @@ def qa_f1_score(prediction, ground_truth, **kwargs):
 
 
 def qa_f1_zh_score(prediction, ground_truth, **kwargs):
+    """Calculate F1 score for Chinese QA tasks using jieba tokenization."""
     prediction_tokens = list(jieba.cut(prediction, cut_all=False))
     ground_truth_tokens = list(jieba.cut(ground_truth, cut_all=False))
     prediction_tokens = [normalize_zh_answer(token) for token in prediction_tokens]
@@ -145,9 +160,14 @@ def qa_f1_zh_score(prediction, ground_truth, **kwargs):
 
 def string_match_all(preds, refs):
     """
-    evaluation metric for RULER
-    preds: List[str]
-    refs: List[List[str]]
+    Evaluation metric for RULER tasks.
+
+    Args:
+        preds: List[str] - List of predictions
+        refs: List[List[str]] - List of reference answers (multiple per prediction)
+
+    Returns:
+        float: Percentage score rounded to 2 decimal places
     """
     score = sum([sum([1.0 if r.lower() in pred.lower() else 0.0 for r in ref]) / len(ref) for pred, ref in zip(preds, refs)]) / len(preds) * 100
     return round(score, 2)

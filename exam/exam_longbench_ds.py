@@ -1,20 +1,9 @@
-'''
-python exams/run_longbench_ds.py     \
-    --max_num_examples 200    \
-    --model_path mistralai/Mistral-7B-Instruct-v0.3     \
-    --save_dir ./results/longbench_ds \
-    --merge
-    
-            'merge': args.merge,
-            'cache_budget': args.max_capacity_prompts,
-            'cache_tail': args.cache_tail,
-            'cache_dense': args.cache_dense,
-            'scale_factor': args.scale_factor,
-            'window_size': args.window_size,
-            'window_pool': args.window_pool,
-            
-python exam/exam_longbench_ds.py     \
-    --model_path Qwen/Qwen2-7B-Instruct     \
+"""
+LongBench Dataset Evaluation Script
+
+Example usage:
+python exam/exam_longbench_ds.py \
+    --model_path Qwen/Qwen2-7B-Instruct \
     --save_dir ./results/longbench_ds \
     --device cuda:0 \
     --max_capacity_prompts 8000 \
@@ -23,18 +12,7 @@ python exam/exam_longbench_ds.py     \
     --scale_factor 1.0 \
     --window_size 12 \
     --merge
-    
-python exam/exam_longbench_ds.py     \
-    --model_path 01-ai/Yi-1.5-6B     \
-    --save_dir ./results/longbench_ds \
-    --device cuda:0 \
-    --max_capacity_prompts 1024 \
-    --cache_tail 0.4 \
-    --cache_dense 0.1 \
-    --scale_factor 1.0 \
-    --window_size 12 \
-    --merge
-'''
+"""
 import os
 import sys
 sys.path.append(os.getcwd())
@@ -52,14 +30,12 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 from mergekv import AttentionForward as AF
 
 
-# 数据集和模型配置
-datasets = ["narrativeqa", "qasper", "multifieldqa_en", "hotpotqa", "2wikimqa", "musique", \
-            "gov_report", "qmsum", "multi_news", "trec", "triviaqa", "samsum", \
-            "passage_count", "passage_retrieval_en", "lcc", "repobench-p"]
-
-datasets = ["narrativeqa", "qasper", "multifieldqa_en", "multifieldqa_zh", "hotpotqa", "2wikimqa", "musique", \
-            "dureader", "gov_report", "qmsum", "multi_news", "vcsum", "trec", "triviaqa", "samsum", "lsht", \
-            "passage_count", "passage_retrieval_en", "passage_retrieval_zh", "lcc", "repobench-p"]
+# Dataset configuration
+datasets = [
+    "narrativeqa", "qasper", "multifieldqa_en", "multifieldqa_zh", "hotpotqa", "2wikimqa", "musique",
+    "dureader", "gov_report", "qmsum", "multi_news", "vcsum", "trec", "triviaqa", "samsum", "lsht",
+    "passage_count", "passage_retrieval_en", "passage_retrieval_zh", "lcc", "repobench-p"
+]
 
 dataset2maxlen = {
     "narrativeqa": 128,
@@ -83,7 +59,7 @@ dataset2maxlen = {
     "passage_retrieval_zh": 32,
     "lcc": 64,
     "repobench-p": 64
-}  # 数据集最大长度映射
+}  # Dataset max length mapping
 
 model2prompt = {
     "narrativeqa": "You are given a story, which can be either a novel or a movie script, and a question. Answer the question asconcisely as you can, using a single phrase if possible. Do not provide any explanation.\n\nStory: {context}\n\nNow, answer the question based on the story asconcisely as you can, using a single phrase if possible. Do not provide any explanation.\n\nQuestion: {input}\n\nAnswer:",
@@ -107,7 +83,7 @@ model2prompt = {
     "passage_retrieval_zh": "以下是若干段落文字，以及其中一个段落的摘要。请确定给定的摘要出自哪一段。\n\n{context}\n\n下面是一个摘要\n\n{input}\n\n请输入摘要所属段落的编号。答案格式必须是\"段落1\"，\"段落2\"等格式\n\n答案是：",
     "lcc": "Please complete the code given below. \n{context}Next line of code:\n",
     "repobench-p": "Please complete the code given below. \n{context}{input}Next line of code:\n"
-}  # 数据集到提示模板的映射
+}  # Dataset to prompt template mapping
 
 model2maxlen = {
     "Llama-2-7b-hf": 3500,
@@ -126,7 +102,7 @@ model2maxlen = {
     'Yi-1.5-6B': 10000,
 }
 
-# 随机种子设置
+# Random seed setup
 def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -136,7 +112,7 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.cuda.manual_seed_all(seed)
 
-# 构建聊天格式提示
+# Build chat format prompt
 def build_chat(prompt):
     return f"[INST] {prompt} [/INST]"
 
@@ -159,23 +135,21 @@ def load_data(data_file, dataset, model_path, max_num_examples=None, sample_meth
             test_data = test_data[:max_num_examples]
     return test_data
 
-# 模型初始化模块（添加方法配置）
+# Model initialization module
 def initialize_model(model_path, merge, cache_config=None, use_cache=True):
     """
-    model_path: 模型路径
-    merge: 处理方法
-    cache_config: 包含缓存参数的字典（新增参数封装）
-    use_cache: 是否使用缓存
+    model_path: Model path
+    merge: Processing method
+    cache_config: Dictionary containing cache parameters
+    use_cache: Whether to use cache
     """
     config = AutoConfig.from_pretrained(model_path)
-    # tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
-    # model = AutoModelForCausalLM.from_pretrained(model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=True, padding_side="left")
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
-    # 加载基础模型
+    # Load base model
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
         torch_dtype=torch.float16,
@@ -183,31 +157,34 @@ def initialize_model(model_path, merge, cache_config=None, use_cache=True):
         use_cache=use_cache,
     ).half().to(device).eval()
 
-    # 初始化模型...
-    if merge:  # 集中处理缓存相关参数
+    # Initialize model with cache configuration
+    if merge:  # Handle cache-related parameters
         AF.change_mode(
             merge=cache_config.get('merge', False),
             cache_budget=cache_config['cache_budget'],
             cache_tail=cache_config['cache_tail'],
             cache_dense=cache_config['cache_dense'],
             metric=cache_config.get('metric', 'dot_product'),
+            score_update=cache_config.get('score_update', 'sum'),
             scale_factor=cache_config['scale_factor'],
+            shrink_factor=cache_config.get('shrink_factor', 0.98),
             window_size=cache_config['window_size'],
             window_pool=cache_config['window_pool'],
-            # kernel_size=12,
+            kernel_size=cache_config.get('kernel_size', 5),
+            out_state=cache_config.get('out_state', 0),
         )
         print(cache_config)
     return tokenizer, model
 
-# 推理与生成模块
+# Inference and generation module
 def generate_predictions(model, tokenizer, test_data, output_max_len, method, quant_method=None, **kwargs):
-    # 创建结果文件路径
-    if cache_config_str:= kwargs.get("cache_config_str"):
+    # Create result file path
+    if cache_config_str := kwargs.get("cache_config_str"):
         method += cache_config_str
-    result_file = os.path.join(kwargs["save_dir"],  f"{kwargs['model_name']}-{kwargs['max_capacity_prompts']}", f"{kwargs['dataset']}",  f"{method}.jsonl")
+    result_file = os.path.join(kwargs["save_dir"], f"{kwargs['model_name']}-{kwargs['max_capacity_prompts']}", f"{kwargs['dataset']}", f"{method}.jsonl")
     os.makedirs(os.path.dirname(result_file), exist_ok=True)
-    
-    # 加载已存在的ID
+
+    # Load existing IDs
     existing_ids = set()
     if os.path.exists(result_file):
         with open(result_file, 'r') as f:
@@ -218,22 +195,21 @@ def generate_predictions(model, tokenizer, test_data, output_max_len, method, qu
                 except json.JSONDecodeError:
                     continue
     print(f"out_file ({len(existing_ids)}):< {result_file} >")
-    
-    # 过滤未处理的数据
+
+    # Filter unprocessed data
     filtered_data = [ex for ex in test_data if ex["_id"] not in existing_ids]
-    
-    # 分批处理
+
+    # Process in batches
     for i in tqdm(range(0, len(filtered_data), kwargs["eval_batch_size"]), desc=f"Processing {kwargs['dataset']}"):
         batch = filtered_data[i:i+kwargs["eval_batch_size"]]
         
-        # 原有生成逻辑
+        # Original generation logic
         batch_prompts = [ex["prompt"] for ex in batch]
-        tokenized = tokenizer(batch_prompts, padding="longest",  return_tensors="pt", add_special_tokens=True).to(device)
-        
-        # 处理超长输入
+        tokenized = tokenizer(batch_prompts, padding="longest", return_tensors="pt", add_special_tokens=True).to(device)
+
+        # Handle overly long inputs
         exceed = False
         if tokenized.input_ids.shape[1] > kwargs["model_max_len"]:
-            # continue # skip !!
             half = kwargs["model_max_len"] // 2
             tokenized.input_ids = torch.cat([
                 tokenized.input_ids[:, :half],
@@ -241,10 +217,9 @@ def generate_predictions(model, tokenizer, test_data, output_max_len, method, qu
             ], dim=1)
             exceed = True
         
-        # 生成预测
+        # Generate predictions
         outputs = model.generate(
-            # **tokenized,
-            input_ids = tokenized.input_ids,
+            input_ids=tokenized.input_ids,
             max_new_tokens=output_max_len,
             num_beams=1,
             do_sample=False,
@@ -252,19 +227,16 @@ def generate_predictions(model, tokenizer, test_data, output_max_len, method, qu
             eos_token_id=[tokenizer.eos_token_id],
             cache_implementation="quantized" if quant_method else None,
         )
-        
-        # 解码结果
+
+        # Decode results
         decoded = [tokenizer.decode(ids[len(tokenized.input_ids[0]):], skip_special_tokens=True) 
                   for ids in outputs]
         
-        # 立即保存结果
+        # Save results immediately
         with open(result_file, 'a') as f:
             for ex, pred in zip(batch, decoded):
                 record = {
                     "_id": ex["_id"],
-                    # "prompt": ex["prompt"],
-                    # "input": ex["input"],
-                    # "context": ex["context"],
                     "answers": ex["answers"],
                     "all_classes": ex["all_classes"],
                     "language": ex["language"],
@@ -274,30 +246,32 @@ def generate_predictions(model, tokenizer, test_data, output_max_len, method, qu
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-# 主流程模块
+# Main process module
 def main(args):
-    
     set_seed(args.seed)
     model_name = os.path.basename(args.model_path.rstrip('/'))
-    
+
     for dataset in datasets:
         print(f"\nProcessing {dataset}...")
-        
-        # 数据加载
+
+        # Data loading
         data_file = f"dataset/LongBench/{dataset}.jsonl"
-        test_data = load_data(data_file, dataset, args.model_path,  args.max_num_examples, args.sample_method)
-        
-        # 模型初始化
-        # 初始化模型时仅传递必要参数
-        cache_config={  # 封装缓存相关参数
+        test_data = load_data(data_file, dataset, args.model_path, args.max_num_examples, args.sample_method)
+
+        # Model initialization
+        cache_config = {  # Cache-related parameters
             'merge': args.merge,
             'cache_budget': args.max_capacity_prompts,
             'cache_tail': args.cache_tail,
             'cache_dense': args.cache_dense,
             'scale_factor': args.scale_factor,
+            'shrink_factor': getattr(args, 'shrink_factor', 0.98),
             'window_size': args.window_size,
             'window_pool': args.window_pool,
-            'metric': 'dot_product'  # 固定值或可配置参数
+            'kernel_size': getattr(args, 'kernel_size', 5),
+            'out_state': getattr(args, 'out_state', 0),
+            'metric': getattr(args, 'metric', 'dot_product'),
+            'score_update': getattr(args, 'score_update', 'sum'),
         }
         tokenizer, model = initialize_model(
             model_path=args.model_path,
@@ -305,7 +279,8 @@ def main(args):
             cache_config=cache_config,
             use_cache=True
         )
-        # 生成预测
+
+        # Generate predictions
         cache_config_str = "-".join(f"{k}-{v}" for k, v in cache_config.items())
         generate_predictions(
             model=model,
@@ -314,55 +289,58 @@ def main(args):
             output_max_len=dataset2maxlen[dataset],
             method=args.method,
             quant_method=None,
-            # 新增关键参数
+            # Key parameters
             save_dir=args.save_dir,
             model_name=model_name,
             dataset=dataset,
-            # 原有参数
+            # Original parameters
             eval_batch_size=1,
-            model_max_len=model2maxlen[model_name], # model2maxlen.get(model_name, 2048),
+            model_max_len=model2maxlen[model_name],
             max_capacity_prompts=args.max_capacity_prompts,
             cache_config_str=cache_config_str
         )
-        
-        # 显存清理
+
+        # Memory cleanup
         del model
         torch.cuda.empty_cache()
 
-# 参数解析模块
+# Argument parsing module
 if __name__ == "__main__":
-    
-    parser = argparse.ArgumentParser(description="LongBench模型评估脚本",  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    
-    # 基础配置组
-    base_group = parser.add_argument_group("基础配置")
-    base_group.add_argument("--model_path", type=str, required=True,  help="模型路径（必填）")
-    base_group.add_argument("--save_dir", type=str, required=True, help="结果保存目录（必填）")
-    base_group.add_argument("--device", type=str, default="cuda", help="运行设备")
-    base_group.add_argument("--seed", type=int, default=42, help="随机种子")
+    parser = argparse.ArgumentParser(description="LongBench model evaluation script", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    # 缓存配置组（新增核心参数分组）
-    cache_group = parser.add_argument_group("KV缓存配置")
-    cache_group.add_argument("--method", type=str, required=False, )  # 明确可选方法 help="KV缓存处理方法")
-    cache_group.add_argument("--max_capacity_prompts", type=int, default=512, help="最大提示词缓存容量")
-    cache_group.add_argument("--cache_tail", type=float, default=0.5, help="尾部缓存保留比例")
-    cache_group.add_argument("--cache_dense", type=float, default=0.02, help="密集缓存")
-    cache_group.add_argument("--scale_factor", type=float, default=1.0, help="缓存缩放因子")
-    cache_group.add_argument("--merge", action="store_true", help="是否启用缓存合并")
-    cache_group.add_argument('--window_size', type=int, default=8)
-    cache_group.add_argument('--window_pool', type=str, default='maxpool')
+    # Basic configuration group
+    base_group = parser.add_argument_group("Basic Configuration")
+    base_group.add_argument("--model_path", type=str, required=True, help="Model path (required)")
+    base_group.add_argument("--save_dir", type=str, required=True, help="Results save directory (required)")
+    base_group.add_argument("--device", type=str, default="cuda", help="Device to run on")
+    base_group.add_argument("--seed", type=int, default=42, help="Random seed")
 
-    # 生成配置组（原有参数归类）
-    gen_group = parser.add_argument_group("生成配置")
-    gen_group.add_argument("--eval_batch_size", type=int, default=1, help="评估批次大小")
-    gen_group.add_argument("--max_num_examples", type=int, default=None, help="最大测试样本数")
-    gen_group.add_argument("--sample_method", type=str, default="topk", choices=["random", "topk"], help="样本采样方法")
+    # Cache configuration group
+    cache_group = parser.add_argument_group("KV Cache Configuration")
+    cache_group.add_argument("--method", type=str, required=False, help="KV cache processing method")
+    cache_group.add_argument("--max_capacity_prompts", type=int, default=512, help="Maximum prompt cache capacity")
+    cache_group.add_argument("--cache_tail", type=float, default=0.5, help="Tail cache retention ratio")
+    cache_group.add_argument("--cache_dense", type=float, default=0.02, help="Dense cache ratio")
+    cache_group.add_argument("--scale_factor", type=float, default=1.0, help="Cache scaling factor")
+    cache_group.add_argument("--shrink_factor", type=float, default=0.98, help="Shrink factor")
+    cache_group.add_argument("--window_size", type=int, default=8, help="Window size")
+    cache_group.add_argument("--window_pool", type=str, default='maxpool', choices=['avgpool', 'maxpool'], help="Window pooling method")
+    cache_group.add_argument("--kernel_size", type=int, default=5, help="Kernel size")
+    cache_group.add_argument("--out_state", type=int, default=0, help="Output state")
+    cache_group.add_argument("--metric", type=str, default='dot_product', choices=['l2', 'dot_product'], help="Metric method")
+    cache_group.add_argument("--score_update", type=str, default='sum', choices=['sum', 'max'], help="Score update method")
+    cache_group.add_argument("--merge", action="store_true", help="Enable cache merging")
+
+    # Generation configuration group
+    gen_group = parser.add_argument_group("Generation Configuration")
+    gen_group.add_argument("--eval_batch_size", type=int, default=1, help="Evaluation batch size")
+    gen_group.add_argument("--max_num_examples", type=int, default=None, help="Maximum test samples")
+    gen_group.add_argument("--sample_method", type=str, default="topk", choices=["random", "topk"], help="Sample method")
     
     args = parser.parse_args()
     device = args.device
-    # choices=["FullKV", "CacheMerge"],
     args.method = "CacheMerge" if args.merge else "FullKV"
     if args.method == "FullKV":
-        args.max_capacity_prompts = 0  # 保持原有逻辑
+        args.max_capacity_prompts = 0  # Keep original logic
     print(args)
     main(args)

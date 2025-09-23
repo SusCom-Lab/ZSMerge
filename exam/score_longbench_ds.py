@@ -1,12 +1,17 @@
+"""
+LongBench Dataset Scoring Script
+
+This script evaluates LongBench dataset results by calculating scores for different metrics
+and generating comprehensive reports.
+"""
 import os
 import json
 import argparse
-import numpy as np
 import pickle
 from pathlib import Path
 from typing import Dict, List
 
-from metrics import (
+from metrics_longbench import (
     qa_f1_score,
     rouge_zh_score,
     qa_f1_zh_score,
@@ -43,9 +48,10 @@ dataset2metric = {
 }
 
 def scorer(dataset, predictions, answers, all_classes):
-    total_score = 0.
+    """Calculate score for a dataset using the appropriate metric."""
+    total_score = 0.0
     for (prediction, ground_truths) in zip(predictions, answers):
-        score = 0.
+        score = 0.0
         if dataset in ["trec", "triviaqa", "samsum", "lsht"]:
             prediction = prediction.lstrip('\n').split('\n')[0]
         for ground_truth in ground_truths:
@@ -54,27 +60,26 @@ def scorer(dataset, predictions, answers, all_classes):
     return round(100 * total_score / len(predictions), 2)
 
 def parse_args():
-    parser = argparse.ArgumentParser()
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="Score LongBench evaluation results")
     parser.add_argument('--results_dir', type=str, required=True,
-                      help='包含所有实验结果的主目录')
+                      help='Main directory containing all experiment results')
     return parser.parse_args()
 
 def get_result_files(root_dir: str) -> List[Dict]:
-    """遍历目录获取所有结果文件信息"""
+    """Traverse directory to get all result file information."""
     files = []
     for model_dir in Path(root_dir).iterdir():
         if not model_dir.is_dir():
             continue
-        # print(model_dir)
-            
-        # 解析模型名称和容量
+
+        # Parse model name and capacity
         model_name, capacity = model_dir.name.rsplit('-', 1)
-        
+
         for dataset_dir in model_dir.iterdir():
             if not dataset_dir.is_dir():
                 continue
-            # print("  ", dataset_dir)
-                
+
             dataset = dataset_dir.name
             for result_file in dataset_dir.glob('*.jsonl'):
                 method = result_file.stem
@@ -88,7 +93,7 @@ def get_result_files(root_dir: str) -> List[Dict]:
     return files
 
 def calculate_score(file_info: Dict) -> Dict:
-    """计算单个结果文件的得分"""
+    """Calculate score for a single result file."""
     try:
         with open(file_info['path'], 'r', encoding='utf-8') as f:
             predictions, answers, all_classes = [], [], []
@@ -97,14 +102,14 @@ def calculate_score(file_info: Dict) -> Dict:
                 predictions.append(data["pred"])
                 answers.append(data["answers"])
                 all_classes = data["all_classes"]
-                
+
         score = scorer(
-            file_info['dataset'], 
-            predictions, 
-            answers, 
+            file_info['dataset'],
+            predictions,
+            answers,
             all_classes
         )
-        
+
         return {
             **file_info,
             "score": score,
@@ -116,47 +121,54 @@ def calculate_score(file_info: Dict) -> Dict:
         return {
             **file_info,
             "score": -1,
-            "n_case": len(answers),
+            "n_case": 0,
             "status": str(e)
         }
 
 def save_results(results: List[Dict], output_dir: str):
-    """保存评分结果"""
-    # 保存为pickle
+    """Save scoring results to pickle and CSV files."""
+    # Save as pickle
     pickle_path = os.path.join(output_dir, 'scores.pkl')
     with open(pickle_path, 'wb') as f:
         pickle.dump(results, f)
-    
-    # 生成CSV报告
+
+    # Generate CSV report
     csv_path = os.path.join(output_dir, 'report.csv')
     datasets = sorted({r['dataset'] for r in results})
     methods = sorted({r['method'] for r in results})
-    
+
     with open(csv_path, 'w') as f:
-        # 表头
+        # Header
         f.write("Method," + ",".join(datasets) + "\n")
-        
-        # 每行数据
+
+        # Data rows
         for method in methods:
             row = [method]
             for dataset in datasets:
-                scores = [r['score'] for r in results 
+                scores = [r['score'] for r in results
                          if r['method'] == method and r['dataset'] == dataset]
                 row.append(str(max(scores)) if scores else "N/A")
             f.write(",".join(row) + "\n")
 
 def main():
+    """Main function to orchestrate the scoring process."""
     args = parse_args()
-    
-    # 1. 获取所有结果文件
+
+    # 1. Get all result files
     result_files = get_result_files(args.results_dir)
-    # 2. 并行计算得分
-    scores = [calculate_score(f) for f in result_files]
-    print(scores)
-    
-    # 3. 保存结果
+    print(f"Found {len(result_files)} result files")
+
+    # 2. Calculate scores
+    scores = []
+    for f in result_files:
+        print(f"Processing {f['path']}...")
+        scores.append(calculate_score(f))
+        # print(scores[-1])
+
+    # 3. Save results
     save_results(scores, args.results_dir)
-    print(f"评估完成，结果已保存至 {args.results_dir}")
+    print(f"Evaluation completed, results saved to {args.results_dir}")
+    print(f"Generated files: scores.pkl, report.csv")
 
 if __name__ == '__main__':
     main()
