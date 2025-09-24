@@ -436,7 +436,7 @@ def cache_update(
     args: AttForwardArgs,
     layer_idx: int,
     init_f: bool,
-) -> None:
+) -> Cache:
     """
     Updates the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
 
@@ -457,7 +457,7 @@ def cache_update(
     # :ADD cache
     if "pos_weight" not in dir(self):
         self.pos_weight = []
-    if "pos_score" not in dir(self): #  
+    if "pos_score" not in dir(self): #
         self.pos_score = []
     for _ in range(len(self.key_cache), layer_idx + 1):
         self.key_cache.append([])
@@ -494,7 +494,7 @@ def cache_update(
             self.value_cache[layer_idx] = torch.cat([self.value_cache[layer_idx], value_states], dim=-2)
             self.pos_weight[layer_idx] = torch.cat([self.pos_weight[layer_idx], torch.ones_like(scores[..., -1:])], dim=-1)
             self.pos_score[layer_idx] = torch.cat([self.pos_score[layer_idx], scores[..., -1:]], dim=-1)
-            return
+            return self
 
         if layer_idx == 0:
             self.tail_ind = (self.tail_ind + 1) % cache_tail
@@ -512,7 +512,7 @@ def cache_update(
         self.value_cache[layer_idx][..., tail_ind, :] = value_states.squeeze(-2)
         self.pos_weight[layer_idx][..., tail_ind] = 1
         self.pos_score[layer_idx][..., tail_ind] = scores[..., -1]
-    return
+    return self
     
 
 def create_att_forward_args(**kwargs) -> AttForwardArgs:
@@ -639,14 +639,14 @@ def sdpa_attn_forward_variant(
     if class_name == "FalconAttention":
         scores = scores.sum(dim=1, keepdim=True)
     scores = de_repeat_kv(scores, num_key_value_groups)
-    cache_update(past_key_value, key_states, value_states, scores=scores, args=args, layer_idx=layer_idx, init_f=init_f)
+    past_key_value = cache_update(past_key_value, key_states, value_states, scores=scores, args=args, layer_idx=layer_idx, init_f=init_f)
 
     attn_output = attn_output.transpose(1, 2).contiguous()
     attn_output = attn_output.view(bsz, q_len, -1)
 
     if class_name == "FalconAttention":
         attn_output = self.dense(attn_output)
-        return attn_output, None, past_key_value
+        return attn_output, past_key_value
         
     attn_output = self.o_proj(attn_output)
     # Bias measurement
