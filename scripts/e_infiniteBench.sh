@@ -29,8 +29,5 @@ python exam/exam_infiniteBench.py \
     --method $method \
     --merge \
     --cache_size $cache_size \
-    --cache_tail 0.05 \
-    --window_size 128 \
-    --scale_factor 1.0 \
     --n_sample $n_sample
 
