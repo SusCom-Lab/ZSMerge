@@ -8,6 +8,10 @@ import argparse
 import time
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 from mergekv import AttentionForward as AF
+from dotenv import load_dotenv
+# env
+load_dotenv()
+ACCESS_TOKEN=os.getenv("ACCESS_TOKEN")
 
 
 
@@ -73,13 +77,14 @@ def load_model(model_name, torch_dtype=torch.float16):
     """
     # Load model components
     config = AutoConfig.from_pretrained(model_name)
-    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True, token=ACCESS_TOKEN)
     tokenizer.pad_token = tokenizer.eos_token  # Set pad token to avoid warnings
     
     # Load model with automatic device placement
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        torch_dtype=torch_dtype
+        torch_dtype=torch_dtype,
+        token=ACCESS_TOKEN
     ).to("cuda")  # Explicit GPU placement for benchmarking
     
     return config, tokenizer, model
@@ -92,11 +97,34 @@ if __name__ == "__main__":
     parser.add_argument("--model_name", type=str, required=True,
                         help="HuggingFace model name/path (e.g. 'meta-llama/Llama-2-13b-hf')")
     
-    # Optimization parameters
+    # MergeKV optimization parameters
     parser.add_argument("--merge", action="store_true",
-                        help="Enable model merging (placeholder for custom implementation)")
+                        help="Enable MergeKV cache compression")
     parser.add_argument("--cache_ratio", type=float, default=0.05,
-                        help="KV cache ratio (0.0-1.0)", metavar="[0-1]")
+                        help="KV cache budget ratio (0.0-1.0)", metavar="[0-1]")
+
+    # Additional MergeKV parameters
+    parser.add_argument("--cache_tail", type=float, default=0.5,
+                        help="Cache tail ratio")
+    parser.add_argument("--cache_dense", type=float, default=0.02,
+                        help="Cache dense ratio")
+    parser.add_argument("--scale_factor", type=float, default=1.0,
+                        help="Scale factor for positional weights")
+    parser.add_argument("--shrink_factor", type=float, default=0.98,
+                        help="Shrink factor for attention scores")
+    parser.add_argument("--window_size", type=int, default=8,
+                        help="Window size for attention")
+    parser.add_argument("--window_pool", type=str, default=None,
+                        choices=[None, "avgpool", "maxpool"],
+                        help="Window pooling method")
+    parser.add_argument("--kernel_size", type=int, default=5,
+                        help="Kernel size for pooling")
+    parser.add_argument("--metric", type=str, default="l2",
+                        choices=["l2", "dot_product"],
+                        help="Distance metric for cache merging")
+    parser.add_argument("--score_update", type=str, default="sum",
+                        choices=["sum", "max"],
+                        help="Score update method")
     
     # Benchmark parameters
     parser.add_argument("--batch_size", type=int, default=1,
@@ -112,13 +140,25 @@ if __name__ == "__main__":
     print(f"\nLoading {args.model_name}...")
     config, tokenizer, model = load_model(args.model_name)
     
-    # Placeholder for merge functionality
+    # Apply MergeKV optimization
     if args.merge:
-        print("Applying model merge...")
+        print("Applying MergeKV optimization...")
+        cache_budget = int(args.prompt_length * args.cache_ratio)
         AF.change_mode(
-            merge=True, 
-            cache_budget=int(args.prompt_length * args.cache_ratio)
+            merge=True,
+            cache_budget=cache_budget,
+            cache_tail=args.cache_tail,
+            cache_dense=args.cache_dense,
+            scale_factor=args.scale_factor,
+            shrink_factor=args.shrink_factor,
+            window_size=args.window_size,
+            window_pool=args.window_pool,
+            kernel_size=args.kernel_size,
+            out_state=0,
+            metric=args.metric,
+            score_update=args.score_update,
         )
+        print(f"Cache budget: {cache_budget} (ratio: {args.cache_ratio})")
     
     # Run benchmark
     print("Starting benchmark...")

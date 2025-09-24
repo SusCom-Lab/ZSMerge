@@ -1,6 +1,12 @@
 *.log
 *.out
+*.ipynb
 results/
+gsm_infinite/
+*.pt
+.vscode/
+CLAUDE.md
+*.pdf
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -157,10 +163,10 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-
+*.pkl
 # pytype static type analyzer
 .pytype/
-
+dataset_cache/
 # Cython debug symbols
 cython_debug/
 

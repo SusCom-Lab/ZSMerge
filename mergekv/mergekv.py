@@ -1,40 +1,98 @@
-from functools import wraps
-from typing import List, Optional, Tuple, Union
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Optional, Tuple
+from dataclasses import dataclass, field
 import os
 import torch
 import torch.nn.functional as F
 import transformers
-from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
-from transformers.cache_utils import Cache, DynamicCache, StaticCache
-from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding, LlamaAttention, apply_rotary_pos_emb
-# from transformers.models.llama.modeling_llama import repeat_kv
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers.cache_utils import Cache
+from transformers.models.llama.modeling_llama import apply_rotary_pos_emb
+from transformers.models.qwen2.modeling_qwen2 import Qwen2SdpaAttention
 from dotenv import load_dotenv
 
 from transformers.utils import logging
 
-# config logger
+# Configure logger
 logger = logging.get_logger(__name__)
 
-# env
+# Load environment variables
 load_dotenv()
 ACCESS_TOKEN=os.getenv("ACCESS_TOKEN")
+
+
+@dataclass
+class AttForwardArgs:
+    """Arguments for attention forward computation and cache management."""
+    # Cache configuration
+    cache_budget: float = 0.2
+    cache_dense: float = 0.02
+    cache_tail: float = 0.5
+
+    # Attention parameters
+    scale_factor: float = 1.0
+    shrink_factor: float = 0.98
+    window_size: int = 8
+    window_pool: Optional[str] = None
+    kernel_size: int = 5
+
+    # Other parameters
+    out_state: int = 0
+    metric: str = "l2"
+    score_update: str = "sum"
+
+    # Computed values (set during initialization)
+    cache_budget_abs: int = field(init=False, default=0)
+    cache_tail_abs: int = field(init=False, default=0)
+    cache_dense_abs: int = field(init=False, default=0)
+
+    def initialize_for_sequence(self, seq_len: int) -> None:
+        """Initialize absolute cache sizes based on sequence length."""
+        # Cache budget
+        if 0 < self.cache_budget < 1:
+            self.cache_budget_abs = int(seq_len * self.cache_budget)
+        elif self.cache_budget >= 1:
+            self.cache_budget_abs = int(self.cache_budget)
+        else:
+            raise ValueError(f"invalid arg value: cache_budget=<{self.cache_budget}>")
+
+        # Cache tail
+        if 0 < self.cache_tail < 1:
+            self.cache_tail_abs = int(self.cache_tail * self.cache_budget_abs)
+        elif self.cache_tail >= 1:
+            self.cache_tail_abs = int(self.cache_tail)
+        else:
+            raise ValueError(f"invalid arg value: cache_tail=<{self.cache_tail}>")
+        self.cache_tail_abs = max(2, self.cache_tail_abs)
+
+        # Cache dense
+        if self.cache_dense == 0:
+            self.cache_dense_abs = 0
+        elif 0 < self.cache_dense < 1:
+            self.cache_dense_abs = int((self.cache_budget_abs - self.cache_tail_abs) * self.cache_dense)
+            self.cache_dense_abs = max(1, self.cache_dense_abs)
+        elif self.cache_dense >= 1:
+            self.cache_dense_abs = int(self.cache_dense)
+        else:
+            raise ValueError(f"invalid arg value: cache_dense=<{self.cache_dense}>")
+
+        # Validation
+        assert self.cache_tail_abs < self.cache_budget_abs
+        assert self.cache_budget_abs > self.cache_tail_abs + self.cache_dense_abs
 
 
 global g_llama_sdpa_attn_forward_orgn, g_mistral_sdpa_attn_forward_orgn, g_falcon_sdpa_attn_forward_orgn
 g_llama_sdpa_attn_forward_orgn = transformers.models.llama.modeling_llama.LlamaSdpaAttention.forward
 g_mistral_sdpa_attn_forward_orgn = transformers.models.mistral.modeling_mistral.MistralSdpaAttention.forward
 g_falcon_sdpa_attn_forward_orgn = transformers.models.falcon.modeling_falcon.FalconAttention.forward
-
+global g_qwen_sdpa_attn_forward_orgn
+g_qwen_sdpa_attn_forward_orgn = Qwen2SdpaAttention.forward
 
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
-    """
-    """
-    # batch, num_key_value_heads, slen, head_dim = hidden_states.shape
+    """Repeat key/value tensors for multi-head attention."""
     if n_rep == 1:
         return hidden_states
-    
+
     shape_ = list(hidden_states.shape)
     shape_n = shape_.copy()
     shape_n.insert(2, n_rep)
@@ -55,49 +113,52 @@ def de_repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
 
 
 def score_scaled_dot_product_attention(
-        query: torch.Tensor ,
-        key: torch.Tensor ,
-        value: torch.Tensor ,
-        attn_mask:  torch.Tensor = None,
-        pos_weight:  torch.Tensor = None,
-        scale_factor: float = None,
-        shrink_factor: float = None,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        attn_mask: Optional[torch.Tensor] = None,
+        pos_weight: Optional[torch.Tensor] = None,
+        scale_factor: Optional[float] = None,
+        shrink_factor: Optional[float] = None,
         init_f: bool = False,
-        window_size: int = None,
+        window_size: Optional[int] = None,
         window_pool: Optional[str] = None,
         kernel_size: Optional[int] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     def sub_sdpa(
             t_bias: int,
-            sub_query: torch.Tensor ,
-            key: torch.Tensor ,
-            value: torch.Tensor ,
-            sub_attn_mask:  torch.Tensor = None,
-            pos_weight:  torch.Tensor = None,
-            scale_factor: float = None,
-            shrink_factor: float = None,
-            need_mask=True,
+            sub_query: torch.Tensor,
+            key: torch.Tensor,
+            value: torch.Tensor,
+            sub_attn_mask: Optional[torch.Tensor] = None,
+            pos_weight: Optional[torch.Tensor] = None,
+            scale_factor: Optional[float] = None,
+            shrink_factor: Optional[float] = None,
+            need_mask: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         dtype = sub_query.dtype
-        bzs, n_head, t_k, d_k = key.size()
-        bzs, n_head, t_q, d_q = sub_query.size()
+        _, _, t_k, d_k = key.size()
+        _, _, t_q, _ = sub_query.size()
         scale = 1.0 / torch.sqrt(torch.tensor(d_k, dtype=dtype))
         
         if sub_attn_mask is None and  need_mask:
             mask_dtype = torch.float32
             sub_attn_mask = torch.triu(torch.full((t_q, t_k), torch.finfo(mask_dtype).min, dtype=mask_dtype, device=key.device), diagonal=t_k - t_bias + 1)
             sub_attn_mask = sub_attn_mask[None, None, ...]
-        scores = torch.matmul(sub_query, key.transpose(-2, -1))
-        scores = scores * scale
-        if sub_attn_mask is not None:
-            scores = scores + sub_attn_mask
+        
+        with torch.amp.autocast("cuda", dtype=torch.float32):
+            scores = torch.matmul(sub_query, key.transpose(-2, -1))
+            scores = scores * scale
+            if sub_attn_mask is not None:
+                scores = scores + sub_attn_mask
 
-        # softmax
-        if pos_weight is not None:
-            scores += scale_factor * torch.log(pos_weight)[..., None, :]
-        attn_weights = F.softmax(scores, dim=-1, dtype=value.dtype)
+            # softmax
+            if pos_weight is not None:
+                scores += scale_factor * torch.log(pos_weight)[..., None, :]
+            attn_weights = F.softmax(scores, dim=-1) # , dtype=value.dtype
 
-        output = torch.matmul(attn_weights, value)
+            output = torch.matmul(attn_weights, value)
+        output = output.to(value.dtype)
         if shrink_factor < 1 and t_q > 1:
             shrink_f = torch.pow(shrink_factor, torch.arange(t_q, device=attn_weights.device))
             shrink_f_flipped = torch.flip(shrink_f, dims=[0])
@@ -106,8 +167,8 @@ def score_scaled_dot_product_attention(
             score = attn_weights.sum(dim=-2)
         return output, score
     
-    bzs, n_head, t_k, d_k = key.size()
-    bzs, n_head, t_q, d_q = query.size()
+    bsz, n_head, t_k, _ = key.size()
+    _, _, t_q, _ = query.size()
 
     if init_f:
         attn_output = torch.nn.functional.scaled_dot_product_attention(
@@ -122,14 +183,14 @@ def score_scaled_dot_product_attention(
     
     if window_size is not None:
         query = query[:, :, -window_size:, :]
-        bzs, n_head, t_q, d_q = query.size()
+        bsz, n_head, t_q, _ = query.size()
         attn_mask = attn_mask[:, :, -window_size:, :] if attn_mask is not None else None
     need_mask =  t_q > 1
     sub_len = t_q
-    shrink_factor_tensor = torch.tensor(shrink_factor, dtype=key.dtype, device=key.device)
+    shrink_factor_tensor = torch.tensor(shrink_factor or 1.0, dtype=key.dtype, device=key.device)
     while 1:
         try:
-            score = torch.zeros(bzs, n_head, t_k, dtype=key.dtype, device=key.device)
+            score = torch.zeros(bsz, n_head, t_k, dtype=key.dtype, device=key.device)
             output = []
             for start_ind in range(0, t_q, sub_len):
                 sub_query = query[:, :, start_ind : start_ind + sub_len]
@@ -139,7 +200,7 @@ def score_scaled_dot_product_attention(
                 score *= torch.pow(shrink_factor_tensor, sub_query.size(2))
                 score += score_
             else:
-                output = torch.concat(output, axis=2)
+                output = torch.cat(output, dim=2)
                 break
         except torch.OutOfMemoryError as e:
             if sub_len<= 10:
@@ -148,47 +209,79 @@ def score_scaled_dot_product_attention(
     if init_f:
         assert attn_output is not None
         output = attn_output
-        if window_pool == 'avgpool':
+        if window_pool == 'avgpool' and kernel_size is not None:
             score = F.avg_pool1d(score, kernel_size=kernel_size, padding=kernel_size//2, stride=1)
-        elif window_pool == 'maxpool':
+        elif window_pool == 'maxpool' and kernel_size is not None:
             score = F.max_pool1d(score, kernel_size=kernel_size, padding=kernel_size//2, stride=1)
     return output, score
 
 
-def topk_split(E, S, k):
+def topk_split_new(E, S, k, tail_max):
+    """
+    Split data tensor E into head A and tail B based on score tensor S.
+    Head A contains the top-k highest scoring elements.
+    Tail B contains the highest scoring tail_max elements from the remaining elements,
+    preserving their original relative order.
+
+    Args:
+        E (Tensor): Input data tensor with shape [b, t, d].
+        S (Tensor): Score tensor with shape [b, t].
+        k (int): Size of head A.
+        tail_max (int): Size of tail B. If remaining elements < tail_max, takes all remaining.
+                        If 0, returns no tail elements.
+
+    Returns:
+        A (Tensor): Head tensor with shape [b, k, d].
+        B (Tensor): Tail tensor with shape [b, actual_tail_max, d].
+        topk_values (Tensor): Scores corresponding to elements in A, shape [b, k].
+        tail_values (Tensor): Scores corresponding to elements in B, shape [b, actual_tail_max].
+    """
     b, t, d = E.shape
-    # Step 1: Get top K indices
-    topk_values, topk_indices = torch.topk(S, k, dim=1)
 
-    # Step 2: Gather top K elements for tensor A
+    # Step 1: Sort scores for entire sequence, get indices sorted by score (high to low)
+    _, sorted_indices = torch.sort(S, dim=1, descending=True)
+
+    # Step 2: Head A indices: top k elements
+    topk_indices = sorted_indices[:, :k]
+
+    # Step 3: Gather head A
     A = torch.gather(E, 1, topk_indices.unsqueeze(-1).expand(-1, -1, d))
+    topk_values = torch.gather(S, 1, topk_indices)
 
-    # Step 3: Create a mask for indices not in top K
-    all_indices = torch.arange(t, device=S.device).unsqueeze(0).expand(b, -1)
-    topk_mask = torch.zeros_like(S, dtype=torch.bool)
-    topk_mask.scatter_(1, topk_indices, True)
+    # Step 4: Handle tail B
+    if tail_max == 0:
+        # If tail_max == 0, return empty tensors
+        B = torch.empty(b, 0, d, dtype=E.dtype, device=E.device)
+        tail_values = torch.empty(b, 0, dtype=S.dtype, device=S.device)
+    else:
+        # Tail B indices: next tail_max elements after head
+        # Handle boundary case where t-k < tail_max
+        num_remaining = t - k
+        actual_tail_max = min(tail_max, num_remaining)
 
-    # Complement indices for B, preserving order
-    complement_indices = all_indices[~topk_mask].view(b, t - k)
+        tail_indices_sorted_by_score = sorted_indices[:, k : k + actual_tail_max]
 
-    # Step 4: Gather remaining elements for tensor B
-    tail_values = torch.gather(S, 1, complement_indices)
-    B = torch.gather(E, 1, complement_indices.unsqueeze(-1).expand(-1, -1, d))
+        # Step 5: Restore original relative order of tail indices
+        # tail_indices_sorted_by_score is currently sorted by score, e.g., [8, 3, 5]
+        # To maintain original order, sort these index values to get [3, 5, 8]
+        # This way gather will take elements in original sequence order
+        final_tail_indices, _ = torch.sort(tail_indices_sorted_by_score, dim=1)
+
+        # Step 6: Gather tail B (using final_tail_indices with restored original order)
+        B = torch.gather(E, 1, final_tail_indices.unsqueeze(-1).expand(-1, -1, d))
+        tail_values = torch.gather(S, 1, final_tail_indices)
+
     return A, B, topk_values, tail_values
-    # A: Tensor of shape [b, k, d]
-    # B: Tensor of shape [b, t - k, d]
 
 
 def cache_init(
-        key_states, value_states, **cache_kwargs
+        key_states, value_states, scores, args: AttForwardArgs
     ):
-    cache_budget = cache_kwargs["cache_budget"]
-    cache_tail = cache_kwargs["cache_tail"]
-    cache_dense = cache_kwargs["cache_dense"]
-    score_update = cache_kwargs["score_update"]
-    # cache_top = 0.5
-    scores = cache_kwargs["scores"] # B, H, Tk
-    cache_top_size = (cache_budget - cache_tail) - cache_dense
+    cache_budget = args.cache_budget_abs
+    cache_tail = args.cache_tail_abs
+    cache_dense = args.cache_dense_abs
+    score_update = args.score_update
+    cache_top_size = int((cache_budget - cache_tail) - cache_dense)
 
     bsz, n_head, t_k, d_k = key_states.size()
     if t_k <= cache_budget:
@@ -197,45 +290,53 @@ def cache_init(
 
     key_li, value_li, score_li, weight_li = [], [], [], []
     for key, value, score in zip(key_states, value_states, scores):
-        # n_head, t_k, d_k = key.size()
         assert t_k >= cache_budget
-        kv_status = torch.cat([key, value], axis=-1)
+        kv_status = torch.cat([key, value], dim=-1)
         kv_status_ = kv_status[..., :t_k-cache_tail, :]
         score_ = score[..., :t_k-cache_tail]
-        # torch.Size([32, 0, 256]) torch.Size([32, 0]) 32 13 0
-        cache_top, cache_residual, score_top, score_residual = topk_split(
+        
+        cache_top, cache_residual, score_top, score_residual = topk_split_new(
             kv_status_.view(n_head, t_k-cache_tail, -1),
             score_.view(n_head, t_k-cache_tail),
-            k=cache_top_size
+            k=cache_top_size,
+            tail_max=int(cache_dense * 10)
         )
-        merge_size, tail_add = divmod(cache_residual.size(-2), cache_dense)
 
-        # special
-        sep_id = tail_add * (merge_size + 1)
-        cache_residual_m = torch.cat([
-            cache_residual[..., :sep_id, :].view(n_head, tail_add, merge_size + 1, 2 * d_k).sum(axis=-2),
-            cache_residual[..., sep_id:, :].view(n_head, cache_dense - tail_add, merge_size, 2 * d_k).sum(axis=-2),
-        ], dim=-2)
-        if score_update == "max":
-            socre_m = torch.cat([
-                score_residual[..., :sep_id].view(n_head, tail_add, merge_size + 1).max(axis=-1)[0],
-                score_residual[..., sep_id:].view(n_head, cache_dense - tail_add, merge_size).max(axis=-1)[0],
-            ], dim=-1)
-        elif score_update == "sum":
-            socre_m = torch.cat([
-                score_residual[..., :sep_id].view(n_head, tail_add, merge_size + 1).sum(axis=-1),
-                score_residual[..., sep_id:].view(n_head, cache_dense - tail_add, merge_size).sum(axis=-1),
-            ], dim=-1)
+        # Handle cache_dense == 0: drop all residual values
+        if cache_dense == 0:
+            # No dense region, only keep top and tail
+            kv_status_cat = torch.cat([cache_top, kv_status[..., t_k-cache_tail:, :]], dim=-2)
+            score_cat = torch.cat([score_top, score[..., t_k-cache_tail:]], dim=-1)
+            weight_cat = torch.cat([torch.ones_like(score_top), torch.ones_like(score[..., t_k-cache_tail:])], dim=-1)
         else:
-            raise ValueError(f"Invalid args<score_update: {score_update}>")
-        weight_m = torch.ones_like(socre_m) * merge_size
-        weight_m[..., :tail_add] += 1
+            merge_size, tail_add = divmod(cache_residual.size(-2), cache_dense)
 
-        cache_residual_m /= weight_m[..., None]
-        # cat
-        kv_status_cat = torch.cat([cache_residual_m, cache_top, kv_status[..., t_k-cache_tail:, :]], dim=-2)
-        score_cat = torch.cat([socre_m, score_top, score[..., t_k-cache_tail:]], dim=-1)
-        weight_cat = torch.cat([weight_m, torch.ones_like(score_top), torch.ones_like(score[..., t_k-cache_tail:])], dim=-1)
+            # Handle uneven division: first tail_add groups get merge_size+1 elements
+            sep_id = tail_add * (merge_size + 1)
+            cache_residual_m = torch.cat([
+                cache_residual[..., :sep_id, :].view(n_head, tail_add, merge_size + 1, 2 * d_k).mean(dim=-2),
+                cache_residual[..., sep_id:, :].view(n_head, cache_dense - tail_add, merge_size, 2 * d_k).mean(dim=-2),
+            ], dim=-2)
+            if score_update == "max":
+                socre_m = torch.cat([
+                    score_residual[..., :sep_id].view(n_head, tail_add, merge_size + 1).max(dim=-1)[0],
+                    score_residual[..., sep_id:].view(n_head, cache_dense - tail_add, merge_size).max(dim=-1)[0],
+                ], dim=-1)
+            elif score_update == "sum":
+                socre_m = torch.cat([
+                    score_residual[..., :sep_id].view(n_head, tail_add, merge_size + 1).sum(dim=-1),
+                    score_residual[..., sep_id:].view(n_head, cache_dense - tail_add, merge_size).sum(dim=-1),
+                ], dim=-1)
+            else:
+                raise ValueError(f"Invalid args<score_update: {score_update}>")
+            weight_m = torch.ones_like(socre_m) * merge_size
+            weight_m[..., :tail_add] += 1
+
+            cache_residual_m /= weight_m[..., None]
+            # cat
+            kv_status_cat = torch.cat([cache_residual_m, cache_top, kv_status[..., t_k-cache_tail:, :]], dim=-2)
+            score_cat = torch.cat([socre_m, score_top, score[..., t_k-cache_tail:]], dim=-1)
+            weight_cat = torch.cat([weight_m, torch.ones_like(score_top), torch.ones_like(score[..., t_k-cache_tail:])], dim=-1)
 
         key_li.append(kv_status_cat[..., :d_k])
         value_li.append(kv_status_cat[..., d_k:])
@@ -250,14 +351,29 @@ def cache_init(
     return key_states, value_states, pos_weight, scores
 
 
-def cache_merge(key_states, value_states, w_n, s_n, key_states_l, value_states_l, pos_weight_l, pos_score_l, **cache_kwargs):
-    metric = cache_kwargs["metric"]
-    score_update = cache_kwargs["score_update"]
-    cache_dense = cache_kwargs["cache_dense"]
+def cache_merge(key_states, value_states, w_n, s_n, key_states_l, value_states_l, pos_weight_l, pos_score_l, args: AttForwardArgs):
+    metric = args.metric
+    score_update = args.score_update
+    cache_dense = args.cache_dense_abs
 
     bsz, n_head, cache_t, d_k = key_states_l.size()
 
-    # Find the minimum index for pos_score_l
+    # Handle cache_dense == 0: simply drop the incoming values
+    if cache_dense == 0:
+        # No dense region to merge with, just find the minimum score in the entire cache
+        # and replace it with the new token
+        _, mrg_i = torch.min(pos_score_l, dim=-1)
+        mrg_i_exp = mrg_i[..., None, None].expand(-1, -1, -1, d_k)
+
+        # Replace the lowest-scoring token with the new token
+        key_states_l.scatter_(-2, mrg_i_exp, key_states)
+        value_states_l.scatter_(-2, mrg_i_exp, value_states)
+        pos_weight_l.scatter_(-1, mrg_i[..., None], w_n)
+        pos_score_l.scatter_(-1, mrg_i[..., None], s_n)
+
+        return key_states_l, value_states_l, pos_weight_l, pos_score_l
+
+    # Find the minimum index for pos_score_l (exclude dense region)
     _, mrg_i = torch.min(pos_score_l[..., cache_dense:], dim=-1)
     mrg_i += cache_dense
 
@@ -273,7 +389,6 @@ def cache_merge(key_states, value_states, w_n, s_n, key_states_l, value_states_l
         raise ValueError(f"Invalid metric: {metric}")
     # metric_ij.scatter_(-1, mrg_i[..., None], torch.finfo(metric_ij.dtype).max)
     _, mrg_j = torch.min(metric_ij, dim=-1)
-    # print(mrg_j[])
     mrg_j_exp = mrg_j[..., None, None].expand(-1, -1, -1, d_k)
 
     # Compute weights and weighted averages for merging
@@ -305,8 +420,6 @@ def cache_merge(key_states, value_states, w_n, s_n, key_states_l, value_states_l
     pos_weight_l.scatter_(-1, mrg_j[..., None], w_ij)
     pos_score_l.scatter_(-1, mrg_j[..., None], s_ij)
 
-    # print(cache_kwargs, mrg_i_exp.shape, key_states.shape, key_states_l.shape)
-    #  'cache_budget': 20, 'metric': 'dot_product', 'cache_tail': 2, 'cache_top': 9} torch.Size([1, 32, 1, 128]) torch.Size([1, 32, 0, 128]) torch.Size([1, 32, 8, 128]
     key_states_l.scatter_(-2, mrg_i_exp, key_states)
     value_states_l.scatter_(-2, mrg_i_exp, value_states)
     pos_weight_l.scatter_(-1, mrg_i[..., None], w_n)
@@ -319,9 +432,11 @@ def cache_update(
     self,
     key_states: torch.Tensor,
     value_states: torch.Tensor,
+    scores: torch.Tensor,
+    args: AttForwardArgs,
     layer_idx: int,
-    **cache_kwargs,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+    init_f: bool,
+) -> Cache:
     """
     Updates the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
 
@@ -342,7 +457,7 @@ def cache_update(
     # :ADD cache
     if "pos_weight" not in dir(self):
         self.pos_weight = []
-    if "pos_score" not in dir(self): #  
+    if "pos_score" not in dir(self): #
         self.pos_score = []
     for _ in range(len(self.key_cache), layer_idx + 1):
         self.key_cache.append([])
@@ -353,16 +468,14 @@ def cache_update(
     if layer_idx == 0:
         self._seen_tokens += key_states.shape[-2]
 
-    # arg parse
-    init_f = cache_kwargs.pop("init_f")
-    cache_budget = cache_kwargs["cache_budget"]
-    cache_tail = cache_kwargs["cache_tail"] - 1 # valid!
-    scores = cache_kwargs["scores"]  # B, H, Tk
-    shrink_factor = cache_kwargs["shrink_factor"]
+    # Parse arguments
+    cache_budget = args.cache_budget_abs
+    cache_tail = args.cache_tail_abs - 1
+    shrink_factor = args.shrink_factor
 
     if init_f:
         key_states_cat, value_states_cat, pos_weight_cat, scores_cat = cache_init(
-                key_states, value_states, **cache_kwargs
+                key_states, value_states, scores=scores, args=args
             )
         self.key_cache[layer_idx] = key_states_cat
         self.value_cache[layer_idx] = value_states_cat
@@ -377,11 +490,11 @@ def cache_update(
         self.pos_score[layer_idx].add_(scores[..., :-1])
         bzs, h, t, d = self.key_cache[layer_idx].size()
         if t < cache_budget:
-            self.key_cache[layer_idx] = torch.concat([self.key_cache[layer_idx], key_states], axis=-2)
-            self.value_cache[layer_idx] = torch.concat([self.value_cache[layer_idx], value_states], axis=-2)
-            self.pos_weight[layer_idx] = torch.concat([self.pos_weight[layer_idx], torch.ones_like(scores[..., -1:])], axis=-1)
-            self.pos_score[layer_idx] = torch.concat([self.pos_score[layer_idx], scores[..., -1:]], axis=-1)
-            return
+            self.key_cache[layer_idx] = torch.cat([self.key_cache[layer_idx], key_states], dim=-2)
+            self.value_cache[layer_idx] = torch.cat([self.value_cache[layer_idx], value_states], dim=-2)
+            self.pos_weight[layer_idx] = torch.cat([self.pos_weight[layer_idx], torch.ones_like(scores[..., -1:])], dim=-1)
+            self.pos_score[layer_idx] = torch.cat([self.pos_score[layer_idx], scores[..., -1:]], dim=-1)
+            return self
 
         if layer_idx == 0:
             self.tail_ind = (self.tail_ind + 1) % cache_tail
@@ -391,74 +504,41 @@ def cache_update(
         k_n, v_n = self.key_cache[layer_idx][..., tail_ind: tail_ind+1, :], self.value_cache[layer_idx][..., tail_ind: tail_ind+1, :]
         w_n, s_n = self.pos_weight[layer_idx][..., tail_ind: tail_ind+1], self.pos_score[layer_idx][..., tail_ind: tail_ind+1]
         
-        cache_merge(k_n, v_n, w_n, s_n, self.key_cache[layer_idx][..., :dyn_ind, :], self.value_cache[layer_idx][..., :dyn_ind, :], 
-            self.pos_weight[layer_idx][..., :dyn_ind], self.pos_score[layer_idx][..., :dyn_ind], **cache_kwargs
+        cache_merge(k_n, v_n, w_n, s_n, self.key_cache[layer_idx][..., :dyn_ind, :], self.value_cache[layer_idx][..., :dyn_ind, :],
+            self.pos_weight[layer_idx][..., :dyn_ind], self.pos_score[layer_idx][..., :dyn_ind], args=args
         )
 
         self.key_cache[layer_idx][..., tail_ind, :] = key_states.squeeze(-2)
         self.value_cache[layer_idx][..., tail_ind, :] = value_states.squeeze(-2)
         self.pos_weight[layer_idx][..., tail_ind] = 1
         self.pos_score[layer_idx][..., tail_ind] = scores[..., -1]
-    # if not layer_idx:
-        # print(f"scores: \n{cache_kwargs["scores"] [0, 0]}")
-        # print(f"{self.pos_score[layer_idx][0, 0]}")
-    # #     # print(key_states[0, 0, :, 0])
-    # #     # print(key_states_cat[0, 0, :, 0])
-    # #     # print(value_states[0, 0, :, 0])
-    # #     # print(value_states_cat[0, 0, :, 0])
-        # print(f"pos_weight_cat: {self.pos_weight[layer_idx][0, 0]}")
-        # print(f"self.tail_ind: {self.tail_ind}")
-    return
+    return self
     
 
-def cache_args_parse(kwargs, q_len):
-    cache_budget = kwargs.get("cache_budget", 0.2)
-    cache_dense = kwargs.get("cache_dense", 1)
-    cache_tail = kwargs.get("cache_tail", 0.1)
-    scale_factor = kwargs.setdefault("scale_factor", 1)
-    shrink_factor = kwargs.setdefault("shrink_factor", 0.98)
-    window_size = kwargs.setdefault("window_size") # 8
-    window_pool = kwargs.setdefault("window_pool") # "maxpool"
-    kernel_size = kwargs.setdefault("kernel_size", 5)
-    kwargs.setdefault("metric", "dot_product")
-    kwargs.setdefault("score_update", "max")
+def create_att_forward_args(**kwargs) -> AttForwardArgs:
+    """Create AttForwardArgs from keyword arguments."""
+    # Extract dataclass fields
+    dataclass_fields = {
+        'cache_budget': kwargs.get('cache_budget', 0.2),
+        'cache_dense': kwargs.get('cache_dense', 0.02),
+        'cache_tail': kwargs.get('cache_tail', 0.5),
+        'scale_factor': kwargs.get('scale_factor', 1.0),
+        'shrink_factor': kwargs.get('shrink_factor', 0.98),
+        'window_size': kwargs.get('window_size', 8),
+        'window_pool': kwargs.get('window_pool'),
+        'kernel_size': kwargs.get('kernel_size', 5),
+        'out_state': kwargs.get('out_state', 0),
+        'metric': kwargs.get('metric', 'l2'),
+        'score_update': kwargs.get('score_update', 'sum'),
+    }
 
-    # cache_budget
-    if 0 < cache_budget < 1:
-        cache_budget = int(q_len * cache_budget)
-    elif cache_budget >= 1:
-        cache_budget = int(cache_budget)
-    else:
-        raise ValueError(f"invalid arg value: cache_budget=<{cache_budget}>")
-    
-    # cache_tail
-    if 0 < cache_tail < 1:
-        cache_tail = int(cache_tail * cache_budget)
-    elif cache_tail >= 1:
-        cache_tail = int(cache_tail)
-    else:
-        raise ValueError(f"invalid arg value: cache_tail=<{cache_tail}>")
-    cache_tail = max(2, cache_tail)
-    assert cache_tail < cache_budget
-    
-    # cache_dense
-    if 0 < cache_dense < 1:
-        cache_dense = int((cache_budget - cache_tail) * cache_dense)
-    elif cache_dense >= 1:
-        cache_dense = int(cache_dense)
-    else:
-        raise ValueError(f"invalid arg value: cache_dense=<{cache_dense}>")
-    cache_dense = max(1, cache_dense)
-
-    # 
-    assert cache_budget > cache_tail + cache_dense
-    kwargs.update(cache_budget=cache_budget, cache_tail=cache_tail, cache_dense=cache_dense)
+    return AttForwardArgs(**dataclass_fields)
 
 
-def llama_sdpa_attn_forward_(
+def sdpa_attn_forward_variant(
     self,
     hidden_states: torch.Tensor,
-    attention_mask:  torch.Tensor = None,
+    attention_mask: Optional[torch.Tensor] = None,
     position_ids: Optional[torch.LongTensor] = None,
     past_key_value: Optional[Cache] = None,
     output_attentions: bool = False,
@@ -466,35 +546,35 @@ def llama_sdpa_attn_forward_(
     cache_position: Optional[torch.LongTensor] = None,
     position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.46
     **kwargs,
-    ) -> Tuple[torch.Tensor,  torch.Tensor, Optional[Tuple[torch.Tensor]]]:
-    # kwargs parse
-    calss_name = self.__class__.__name__
-    if calss_name == "FalconAttention":
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Cache]]:
+    # Parse class-specific parameters
+    class_name = self.__class__.__name__
+    if class_name == "FalconAttention":
         past_key_value = kwargs.get("layer_past")
         num_key_value_groups = 1
     else:
         num_key_value_groups = self.num_key_value_groups
-    # args init
-    cum_len = position_ids[:, -1].max() + 1
-    bsz, q_len, _ = hidden_states.size()
 
-    init_f = True if q_len > 1 else False
+    # Initialize arguments
+    bsz, q_len, _ = hidden_states.size()
+    init_f = q_len > 1
+
     if init_f:
-        cache_args_parse(kwargs, q_len)
-        self.forward_kwargs = kwargs.copy()
+        # Create and initialize args for new sequence
+        self.forward_args = create_att_forward_args(**kwargs)
+        self.forward_args.initialize_for_sequence(q_len)
     else:
-        kwargs.update(self.forward_kwargs)
+        # Use existing args for incremental generation
+        if not hasattr(self, 'forward_args'):
+            raise RuntimeError("forward_args not initialized. This should not happen.")
+
     layer_idx = self.layer_idx
-    kwargs.update(layer_idx=layer_idx, init_f=init_f)
-    cache_budget = kwargs["cache_budget"]
-    window_size = kwargs["window_size"]
-    window_pool = kwargs["window_pool"]
-    kernel_size = kwargs["kernel_size"]
+    args = self.forward_args
     
     if output_attentions:
-        raise NotImplemented(f"output_attentions should be set to False!")
+        raise NotImplementedError("output_attentions should be set to False!")
     
-    if calss_name == "FalconAttention":
+    if class_name == "FalconAttention":
         fused_qkv = self.query_key_value(hidden_states)  # [batch_size, seq_length, 3 x hidden_size]
         num_kv_heads = self.num_heads if self.new_decoder_architecture else self.num_kv_heads
         (query_layer, key_layer, value_layer) = self._split_heads(fused_qkv)
@@ -523,68 +603,98 @@ def llama_sdpa_attn_forward_(
         cos, sin = position_embeddings
     query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-    bsz, n_h, t_k, d_k = key_states.size()
-    bsz, n_head, q_len, n_dim = query_states.size()
-    # if bsz > 1:
-    #     raise NotImplementedError
+    _, _, t_k, d_k = key_states.size()
+    bsz, n_head, q_len, _ = query_states.size()
     
     assert past_key_value is not None
 
-    # pos_weight = torch.ones_like(position_ids, device=position_ids.device).type(query_states.dtype)[:, None].repeat(1, n_h, 1)
-    # print(f"{init_f}: self.num_key_value_groups: {self.num_key_value_groups}", query_states.size(), key_states.size(), value_states.size(), )
     if init_f:
         key_states_ = key_states
         value_states_ = value_states
         pos_weight_ = None
 
     else:
-        key_states_ = torch.concat([past_key_value.key_cache[layer_idx], key_states], dim=-2)
-        value_states_ = torch.concat([past_key_value.value_cache[layer_idx], value_states], dim=-2)
-        pos_weight_ = torch.concat([past_key_value.pos_weight[layer_idx], torch.ones_like(key_states[..., 0])], dim=-1)
+        key_states_ = torch.cat([past_key_value.key_cache[layer_idx], key_states], dim=-2)
+        value_states_ = torch.cat([past_key_value.value_cache[layer_idx], value_states], dim=-2)
+        pos_weight_ = torch.cat([past_key_value.pos_weight[layer_idx], torch.ones_like(key_states[..., 0])], dim=-1)
 
     key_states_ = repeat_kv(key_states_, num_key_value_groups)
     value_states_ = repeat_kv(value_states_, num_key_value_groups)
     pos_weight_ = None if pos_weight_ is None else repeat_kv(pos_weight_, num_key_value_groups) 
         
-    scale_factor = kwargs["scale_factor"]
-    shrink_factor = kwargs["shrink_factor"]
     attn_output, scores = score_scaled_dot_product_attention(
         query_states,
         key_states_,
         value_states_,
         attn_mask=None,
         pos_weight=pos_weight_,
-        scale_factor=scale_factor,
-        shrink_factor=shrink_factor,
+        scale_factor=args.scale_factor,
+        shrink_factor=args.shrink_factor,
         init_f=init_f,
-        window_size=window_size,
-        window_pool=window_pool,
-        kernel_size=kernel_size,
+        window_size=args.window_size,
+        window_pool=args.window_pool,
+        kernel_size=args.kernel_size,
     )
-    # modified to adapt falcon
-    if calss_name == "FalconAttention":
+    # Modified to adapt falcon
+    if class_name == "FalconAttention":
         scores = scores.sum(dim=1, keepdim=True)
     scores = de_repeat_kv(scores, num_key_value_groups)
-    cache_update(past_key_value, key_states, value_states, scores=scores, **kwargs)
+    past_key_value = cache_update(past_key_value, key_states, value_states, scores=scores, args=args, layer_idx=layer_idx, init_f=init_f)
 
     attn_output = attn_output.transpose(1, 2).contiguous()
     attn_output = attn_output.view(bsz, q_len, -1)
 
-    if calss_name == "FalconAttention":
+    if class_name == "FalconAttention":
         attn_output = self.dense(attn_output)
         return attn_output, past_key_value
         
     attn_output = self.o_proj(attn_output)
+    # Bias measurement
+    if args.out_state:
+        key_states_2 = past_key_value.key_cache[layer_idx]
+        value_states_2 = past_key_value.value_cache[layer_idx]
+        pos_weight_2 = past_key_value.pos_weight[layer_idx]
+        
+        key_states_2 = repeat_kv(key_states_2, num_key_value_groups)
+        value_states_2 = repeat_kv(value_states_2, num_key_value_groups)
+        pos_weight_2 = None if pos_weight_2 is None else repeat_kv(pos_weight_2, num_key_value_groups) 
+        # pos_weight_2[:, :, 0] = 0.0001
+        attn_output_0, scores = score_scaled_dot_product_attention(
+            query_states[:, :, -1:, :],
+            key_states_2,
+            value_states_2,
+            attn_mask=None,
+            pos_weight=pos_weight_2,
+            scale_factor=0,
+            shrink_factor=args.shrink_factor,
+            init_f=False,
+            window_size=args.window_size,
+            window_pool=args.window_pool,
+            kernel_size=args.kernel_size,
+        )
+        attn_output_1, scores = score_scaled_dot_product_attention(
+            query_states[:, :, -1:, :],
+            key_states_2,
+            value_states_2,
+            attn_mask=None,
+            pos_weight=pos_weight_2,
+            scale_factor=1,
+            shrink_factor=args.shrink_factor,
+            init_f=False,
+            window_size=args.window_size,
+            window_pool=args.window_pool,
+            kernel_size=args.kernel_size,
+        )
+        
+        attn_output_ = torch.cat([attn_output_0, attn_output_1], dim=0).transpose(1, 2).contiguous()
+        attn_output_ = attn_output_.view(bsz * 2, 1, -1)
 
+        if class_name != "FalconAttention":
+            attn_output_ = self.o_proj(attn_output_)
+        self.out_state = torch.cat([attn_output[:, -1:], attn_output_], dim=0)
     return attn_output, None, past_key_value
 
 
-def args_dec(func, **kws):
-    @wraps(func)
-    def dec_func(*args, **kwargs):
-        kwargs.update(kws)
-        return func(*args, **kwargs)
-    return dec_func
 
 
 class AttentionForward:
@@ -606,24 +716,41 @@ class AttentionForward:
     
     @classmethod
     def change_mode(cls, merge, **kws):
+        """Change attention mode between original and MergeKV variant.
+
+        Args:
+            merge: If True, use MergeKV attention. If False, use original attention.
+            **kws: Additional arguments for AttForwardArgs configuration.
+        """
         if merge:
-            transformers.models.llama.modeling_llama.LlamaSdpaAttention.forward = args_dec(llama_sdpa_attn_forward_, **kws)
-            transformers.models.mistral.modeling_mistral.MistralSdpaAttention.forward = args_dec(llama_sdpa_attn_forward_, **kws)
-            transformers.models.falcon.modeling_falcon.FalconAttention.forward = args_dec(llama_sdpa_attn_forward_, **kws)
+            # Create a wrapper that passes the configuration to the variant
+            def make_forward_wrapper(**config_kws):
+                def forward_wrapper(self, *args, **kwargs):
+                    kwargs.update(config_kws)
+                    return sdpa_attn_forward_variant(self, *args, **kwargs)
+                return forward_wrapper
+
+            wrapper = make_forward_wrapper(**kws)
+            transformers.models.llama.modeling_llama.LlamaSdpaAttention.forward = wrapper
+            transformers.models.mistral.modeling_mistral.MistralSdpaAttention.forward = wrapper
+            transformers.models.falcon.modeling_falcon.FalconAttention.forward = wrapper
+            Qwen2SdpaAttention.forward = wrapper
         else:
             global g_llama_sdpa_attn_forward_orgn, g_mistral_sdpa_attn_forward_orgn, g_falcon_sdpa_attn_forward_orgn
             transformers.models.llama.modeling_llama.LlamaSdpaAttention.forward = g_llama_sdpa_attn_forward_orgn
             transformers.models.mistral.modeling_mistral.MistralSdpaAttention.forward = g_mistral_sdpa_attn_forward_orgn
             transformers.models.falcon.modeling_falcon.FalconAttention.forward = g_falcon_sdpa_attn_forward_orgn
+            Qwen2SdpaAttention.forward = g_qwen_sdpa_attn_forward_orgn
+
 
 
 
 def main():
     batch_prompts = [
         "What is the capital of France?",
-        # "Explain the theory of relativity.",
-        # "Describe the process of photosynthesis.",
-        # "Who is the author of Pride and Prejudice?",
+        "Explain the theory of relativity.",
+        "Describe the process of photosynthesis.",
+        "Who is the author of Pride and Prejudice?",
     ]
     output_len = 6
 
@@ -635,12 +762,11 @@ def main():
     batch_input_ids = tokenized_prompts.input_ids
 
     context_length = batch_input_ids.shape[-1]
-    output_max_len = context_length + output_len
 
     output = model.generate(
         **tokenized_prompts,
         output_attentions = False,
-        max_new_tokens=output_max_len,
+        max_new_tokens=output_len,
         num_beams=1,
         do_sample=False,
         top_p=None,
@@ -653,11 +779,11 @@ def main():
     for q, a in zip(batch_prompts, batch_outputs):
         print("-" * 20, f"Q:\n\t{q}\nA:\n\t{a}", sep="\n")
     
-    AttentionForward.change_mode(merge=True, cache_budget=18)
+    AttentionForward.change_mode(merge=True, cache_budget=10, cache_dense=0)
     output = model.generate(
         **tokenized_prompts,
         output_attentions = False,
-        max_new_tokens=output_max_len,
+        max_new_tokens=output_len,
         num_beams=1,
         do_sample=False,
         top_p=None,
