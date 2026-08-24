@@ -61,7 +61,7 @@ If you found this repository helpful in your work, please cite our [paper](https
 ```bib
 @article{liu2025zeromerge,
   title={ZSMerge: Zero-Shot KV Cache Compression for Memory-Efficient Long-Context LLMs},
-  author={Liu, Xin and Liu, Pei and Tang, Guoming},
+  author={Liu, Xin and Wang, Xudong and Liu, Pei and Tang, Guoming},
   journal={arXiv preprint arXiv:2503.10714},
   year={2025}
 }
